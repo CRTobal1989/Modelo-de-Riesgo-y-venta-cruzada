@@ -1,0 +1,2982 @@
+---
+title: "25.05.10_Cuestión 1 - Modelo de Riesgo_Cristóbal León-Salas"
+author: "Cristóbal León-Salas"
+date: "2025-05-10"
+output:
+  html_document:
+    theme: cerulean
+    highlight: kate
+    fig_width: 8
+    fig_height: 5
+    fig_caption: true
+    code_folding: show
+    number_sections: true
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: false
+---
+
+<center>
+
+![](img/Seguro_Terceros.jpg)
+</center>
+
+```{r 0.0. setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  fig.align = 'center',
+  fig.width = 12,  # Esto actúa como un valor base
+  fig.height = 5,  # También un valor base
+  out.width = '100%',  # Asegura que el ancho se ajuste
+  out.height = '80%'   # Ajusta el alto al 80%
+)
+options(warn = -1) #Para eliminar los mensajes Warnings del KML generado
+
+```
+
+# INTRODUCCIÓN
+
+En el presente ejercicio se va a abordar la elaboración de un modelo de riesgo enfocado en la tarificación del seguro de autos, concretamente en la cobertura de daños materiales a terceros. El objetivo será el calcular las primas puras mediante un enfoque de doble modelización, separando la frecuencia y la severidad del siniestro, es decir que no haremos el procedimiento Tweedie Approach, para que nos permita valorar variable a variable las tendencias de la manera más precisa posible. Para ello, en primer lugar, vamos a proceder con una una limpieza exhaustiva de los datos disponibles y un análisis exploratorio detallado (EDA) que permita identificar tendencias relevantes en las variables implicadas. Este trabajo se enmarca dentro de las funciones clave del departamento de Pricing & Analytics de No Vida de una aseguradora española con sede en Madrid, que incluyen el cálculo optimizado de tarifas, el ajuste dinámico de precios, así como el desarrollo de modelos predictivos tanto de caída de cartera como de conversión de nuevos clientes.
+
+## Carga de librerias
+
+Se cargan todas las librerias que van a ser utilizadas durante el ejercicio.
+
+```{r 0.1. Carga de librerias}
+
+#Se cargan todas las librerias que van a ser usadas durante el ejercicio:
+
+suppressPackageStartupMessages({
+  library(data.table)    # Manipulación eficiente de grandes volúmenes de datos y cadenas de texto
+  library(tidyverse)     # Conjunto de paquetes para manipulación, análisis y visualización de datos (incluye dplyr, ggplot2,     readr, etc.)
+  library(reactable)     # Creación de tablas interactivas en HTML
+  library(rcompanion)    # Herramientas para análisis estadístico y apoyo en lectura/formato de datos
+  library(creditmodel)   # Modelización de riesgo crediticio, incluye funciones para validación y exportación de resultados
+  library(writexl)       # Exportación de data frames a archivos Excel (.xlsx)
+  library(readxl)        # Lectura de archivos Excel (.xls y .xlsx)
+  library(corrplot)      # Visualización de matrices de correlación
+  library(RColorBrewer)  # Paletas de colores para mejorar gráficos
+  library(rlang)         # Programación avanzada y evaluación no estándar (tidy evaluation)
+  library(gridExtra)     # Composición de múltiples gráficos en una sola figura
+  library(knitr)         # Formateo de resultados y generación de tablas en informes RMarkdown
+  library(kableExtra)    # Parecido a knitr
+    })
+
+```
+
+## Funciones
+
+### Función reactViewTableTarget
+
+Función para mostrar una tabla interactiva con formato especial en columnas ojetivo.
+
+```{r 0.2.1. Función reactViewTableTarget}
+
+reactViewTableTarget <- function(data, vecTargetVar){
+  
+  # Crea una lista con el estilo especial para las columnas objetivo (target)
+  coldefsTargets <- list(
+    colDef(
+      headerStyle = "background: gold; color: black;",  # Encabezado: fondo dorado, texto negro
+      style = "background: #FEF9E7;",                   # Celdas: fondo amarillo claro
+      class = "border-left"                             # Clase CSS extra opcional (puede usarse en estilos externos)
+    )
+  )
+
+  # Replica el estilo anterior para todas las variables en 'vecTargetVar'
+  coldefsTargets <- rep(coldefsTargets, length(vecTargetVar))
+
+  # Asigna los nombres de las variables target como nombres de las columnas a formatear
+  names(coldefsTargets) <- vecTargetVar 
+
+  data %>%
+    reactable(
+      bordered = TRUE,                # Bordes entre celdas
+      filterable = FALSE,            # No permite filtros por columna
+      resizable = TRUE,              # Columnas redimensionables
+      searchable = TRUE,             # Barra de búsqueda global activada
+      showPageSizeOptions = TRUE,    # Muestra opciones de filas por página
+      defaultPageSize = 10,          # Tamaño de página por defecto: 10 filas
+      pageSizeOptions = c(5, 10, 20, 50, 100),  # Opciones para cambiar el tamaño de página
+      borderless = FALSE,            # Bordes visibles
+      highlight = TRUE,              # Resalta la fila al pasar el cursor
+      outlined = TRUE,               # Contorno exterior a la tabla
+      showSortIcon = TRUE,           # Muestra iconos de ordenación
+      showSortable = TRUE,           # Permite ordenar columnas
+      width = "100%",                # Ocupa todo el ancho disponible
+      
+      # Estilo por defecto para todas las columnas (excepto las target)
+      defaultColDef = colDef(
+        align = "center",            # Centra el contenido en las celdas
+        headerStyle = "background: #000080; color: white;",  # Encabezados: fondo verde oscuro, texto blanco
+        style = "background: #efeee0;",  # Fondo beige para celdas
+        
+        
+        cell = function(value) {
+          # Formateo de valores: sin decimales si es entero, con 2 si es decimal
+          if (!is.na(value) && is.numeric(value)) {
+            if (value %% 1 == 0) {
+              return(as.integer(value))  # Entero sin decimales
+            } else {
+              return(format(round(value, 2), nsmall = 2))  # Decimal con 2 cifras
+            }
+          } else {
+            return(value)  # Para texto, NA o factores: mostrar tal cual
+          }
+        }
+      ),
+
+      # Estilo específico para las columnas target
+      columns = coldefsTargets
+    )
+}
+
+```
+
+### Función edaSumCont
+
+Función para calcular un resumen estadístico de una variable continua y visualizarlo
+
+```{r 0.2.2. Función edaSumCont}
+
+edaSumCont <- function(data, var){
+  
+  data %>% 
+    summarise(
+      # Media (promedio), redondeada a 2 decimales
+      mean = round(mean(get(var), na.rm = TRUE), 2),
+      
+      # Desviación estándar, redondeada a 2 decimales
+      se = round(sd(get(var), na.rm = TRUE), 2),
+      
+      # Valor mínimo
+      min = min(get(var), na.rm = TRUE),
+      
+      # Primer cuartil (percentil 25)
+      q25 = quantile(get(var), 0.25, na.rm = TRUE),
+      
+      # Mediana (percentil 50)
+      median = median(get(var), na.rm = TRUE),
+      
+      # Tercer cuartil (percentil 75)
+      q75 = quantile(get(var), 0.75, na.rm = TRUE),
+      
+      # Valor máximo
+      max = max(get(var), na.rm = TRUE),
+      
+      # Número de valores faltantes (NA)
+      nNA = sum(is.na(get(var)))
+    ) %>% 
+    
+    # Visualiza el resultado como tabla interactiva
+    reactViewTable()
+}
+
+```
+
+### Función edaHistCont
+
+Función para generar un histograma de una variable continua
+
+```{r 0.2.3. Función edaHistCont}
+
+edaHistCont <- function(data, var, bins = 20){
+  
+  ggplot(data, aes(x = get(var))) +
+    geom_histogram(
+      bins = bins,
+      color = "#003366",    # Azul marino oscuro para el borde
+      fill = "#6699CC",     # Azul suave para el relleno de las barras
+      position = "dodge"
+    ) +
+    xlab(var) +
+    ylab("Conteo") +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(vjust = 0.6),
+      axis.text = element_text(size = 12),
+      axis.title = element_text(size = 14, face = "bold"),
+      legend.position = "bottom",
+      legend.title = element_blank()
+    )
+}
+
+```
+
+### Función edaDensityNum
+
+Función para visualizar la densidad de una variable numérica continua
+
+```{r 0.2.4. Función edaDensityNum}
+
+edaDensityNum <- function(data, var, xlimSup){
+  
+  # Calcular estadísticos
+  media <- mean(data[[var]], na.rm = TRUE)
+  mediana <- median(data[[var]], na.rm = TRUE)
+  
+  # Crear data frame auxiliar para las líneas verticales
+  lineas <- data.frame(
+    valor = c(media, mediana),
+    tipo = c("Media", "Mediana")
+  )
+  
+  ggplot(data = data, aes(x = get(var))) +
+    
+    # Curva de densidad con relleno azul suave
+    geom_density(
+      color = "black",
+      fill = "#6699CC"
+    ) +
+    
+    # Líneas verticales con leyenda
+    geom_vline(data = lineas, aes(xintercept = valor, color = tipo),
+               linetype = "dashed", size = 1) +
+    
+    # Personalización de colores de la leyenda
+    scale_color_manual(values = c("Media" = "#1E90FF", "Mediana" = "#FF6347")) +
+    
+    labs(
+      title = paste("Densidad de", var),
+      y = "Densidad",
+      x = var,
+      color = "Estadísticos"  # Título de la leyenda
+    ) +
+    
+    xlim(0, xlimSup) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(vjust = 0.6),
+      axis.text = element_text(size = 12),
+      axis.title = element_text(size = 14, face = "bold"),
+      legend.position = "bottom"
+    )
+}
+
+```
+
+### Función reactViewTable
+
+Función para visualizar un data frame como tabla interactiva con estilo personalizado
+
+```{r  0.2.5. Función reactViewTable}
+
+reactViewTable <- function(data){
+
+  data %>%
+    reactable(
+      bordered = TRUE,                # Muestra bordes entre celdas
+      filterable = FALSE,            # No permite aplicar filtros por columna
+      resizable = TRUE,              # Permite redimensionar el ancho de las columnas
+      searchable = TRUE,             # Activa una barra de búsqueda global
+      showPageSizeOptions = TRUE,    # Permite al usuario cambiar el número de filas por página
+      defaultPageSize = 10,          # Número de filas por página por defecto
+      pageSizeOptions = c(5, 10, 20, 50, 100),  # Opciones disponibles para paginación
+      borderless = FALSE,            # Si fuera TRUE, elimina los bordes (aquí se mantienen)
+      highlight = TRUE,              # Resalta la fila al pasar el cursor por encima
+      outlined = TRUE,               # Añade un borde general alrededor de la tabla
+      showSortIcon = TRUE,           # Muestra iconos de ordenación en los encabezados
+      showSortable = TRUE,           # Permite ordenar las columnas haciendo clic en los encabezados
+      width = "100%",                # La tabla ocupa el 100% del ancho disponible en el contenedor
+
+      # Configuración por defecto para todas las columnas
+      defaultColDef = colDef(
+        align = "center",            # Centra el contenido de todas las celdas
+
+        headerStyle = "background: blue; color: white;",  # Estilo del encabezado: fondo verde oscuro, texto blanco
+        style = "background: #efeee0;",                      # Estilo de fondo para todas las celdas: beige claro
+
+        # Función para personalizar el contenido de las celdas
+        cell = function(value) {
+          if (is.na(value)) {
+            return("")               # Si el valor es NA, se deja la celda vacía
+          } else if (is.numeric(value)) {
+            if (value %% 1 == 0) {
+              return(as.integer(value))  # Si el valor es entero, se muestra sin decimales
+            } else {
+              return(format(round(value, 2), nsmall = 2))  # Si tiene decimales, se redondea a 2 cifras
+            }
+          } else {
+            return(value)            # Si no es numérico, se devuelve tal cual (texto, factor, etc.)
+          }
+        }
+      )
+    )
+}
+
+```
+
+### Función edaDensityNumRef
+
+Función para graficar la densidad de una variable numérica continua. Incluye líneas verticales para: media, mediana y media ponderada
+
+```{r  0.2.6. Función edaDensityNumRef}
+
+edaDensityNumRef <- function(data, var, xlimSup, ref_value){
+  
+  # Calcular la media (promedio) de la variable
+  media <- mean(data[[var]], na.rm = TRUE)
+  
+  # Calcular la mediana (valor central) de la variable
+  mediana <- median(data[[var]], na.rm = TRUE)
+  
+  # Crear un data frame auxiliar con los valores a representar como líneas verticales
+  lineas <- data.frame(
+    valor = c(media, mediana, ref_value),         # Valores en el eje x
+    tipo = c("Media", "Mediana", "Media Ponderada")  # Etiquetas para la leyenda
+  )
+  
+  ggplot(data = data, aes(x = get(var))) +         # Configura los datos y variable a graficar
+    
+    # Añade la curva de densidad con color de fondo azul suave
+    geom_density(
+      color = "black",     # Borde de la curva
+      fill = "#6699CC"     # Relleno azul claro
+    ) +
+    
+    # Añade las líneas verticales para media, mediana y referencia
+    geom_vline(
+      data = lineas,
+      aes(xintercept = valor, color = tipo),       # Mapea valor y color por tipo
+      linetype = "dashed",                         # Tipo de línea discontinua
+      size = 1                                     # Grosor de la línea
+    ) +
+    
+    # Asigna colores personalizados a cada tipo de línea
+    scale_color_manual(values = c(
+      "Media" = "#1E90FF",               # Azul (DodgerBlue)
+      "Mediana" = "#FF6347",             # Rojo (Tomato)
+      "Media Ponderada" = "#228B22"      # Verde (ForestGreen)
+    )) +
+    
+    # Etiquetas del gráfico
+    labs(
+      title = paste("Densidad de", var),     # Título dinámico con nombre de variable
+      y = "Densidad",                        # Etiqueta del eje y
+      x = var,                               # Etiqueta del eje x
+      color = "Estadísticos"                 # Título de la leyenda
+    ) +
+    
+    # Límite superior del eje x según parámetro
+    xlim(0, xlimSup) +
+    
+    # Tema visual clásico (limpio, sin fondo)
+    theme_classic() +
+    
+    # Estilo del texto y posición de la leyenda
+    theme(
+      axis.text.x = element_text(vjust = 0.6),         # Ajuste vertical de etiquetas x
+      axis.text = element_text(size = 12),             # Tamaño texto de ejes
+      axis.title = element_text(size = 14, face = "bold"),  # Títulos en negrita
+      legend.position = "bottom"                       # Leyenda en la parte inferior
+    )
+}
+
+```
+
+### Función edaBarCatExp
+
+Función para graficar barras con la suma de una variable numérica agrupada por una variable categórica
+
+```{r 0.2.7. Función edaBarCatExp}
+
+edaBarCatExp <- function(data, var, exp, sizeXaxis, angleXaxis, vjustXaxis, hjustXaxis){
+  
+  ggplot(data, aes(x = get(var), y = get(exp))) +  # Define las estéticas: var en eje x, exp en eje y
+
+    # Alternativa: podrías usar geom_bar(stat="identity"), pero aquí usamos stat_summary:
+    stat_summary(
+      aes(y = get(exp)),                          # Suma de la variable numérica (exp)
+      fun = "sum",                                # Calcula la suma por categoría
+      geom = "bar",                               # Representa como barras
+      color = "#1E90FF",                          # Color del borde de las barras (azul medio)
+      fill = "#6699CC"                            # Color de relleno de las barras (azul claro)
+    ) +
+    
+    xlab(var) +                                   # Etiqueta del eje x con el nombre de la variable categórica
+    ylab("Exposición") +                          # Etiqueta del eje y
+    
+    theme_classic() +                             # Tema visual limpio (sin fondo ni rejilla)
+    
+    theme(                                        # Personalización del texto del gráfico
+      axis.text.x = element_text(                # Estilo de las etiquetas del eje x:
+        angle = angleXaxis,                      # Ángulo de rotación del texto (p.ej. 45 o 90)
+        vjust = vjustXaxis,                      # Ajuste vertical
+        hjust = hjustXaxis,                      # Ajuste horizontal
+        size = sizeXaxis                         # Tamaño del texto en el eje x
+      ),
+      axis.text = element_text(size = 12),        # Tamaño del texto del resto de etiquetas
+      axis.title = element_text(size = 14, face = "bold"),  # Títulos de los ejes en negrita
+      legend.position = "bottom",                 # Posición de la leyenda
+      legend.title = element_blank()              # Oculta el título de la leyenda
+    )
+}
+
+```
+
+### Función preprocess
+
+```{r 0.2.8. Función preprocess}
+
+preprocess <- function(data){
+
+ # condcarne
+  dataClean <- data %>%
+  mutate(condCarneFact = case_when(
+    condCarne > 59 ~ "60+",
+    T ~ as.character(condCarne)),
+    condCarneFact = relevel(factor(condCarneFact, (condCarneFact %>% unique)[condCarneFact %>% unique %>% as.numeric %>% order]), ref = "35"))
+
+  # condScore
+  dataClean <- dataClean  %>%
+  mutate(condScoreFact = case_when(
+    condScore == 99 ~ "Nuevos", 
+    T ~ as.character(condScore)),
+         condScoreFact = relevel(factor(condScoreFact, (condScoreFact %>% unique)[condScoreFact %>% unique %>% str_remove_all("[[+-]]") %>% as.numeric  %>% order]), ref = "1"))
+  
+  # polAntiguedad
+  dataClean <- dataClean  %>%
+  mutate(polAntiguedadFact = case_when(
+    polAntiguedad >= 5 ~ "5+", 
+    T ~ as.character(polAntiguedad)),
+         polAntiguedadFact = relevel(factor(polAntiguedadFact, (polAntiguedadFact %>% unique)[polAntiguedadFact %>% unique %>% as.numeric  %>% order]), ref = "2"))
+
+  # polTipo
+  dataClean <- dataClean %>%
+  mutate(polTipoFact = polTipo,
+         polTipoFact = relevel(factor(polTipoFact, c("Semestral", "Anual")), ref = "Anual"))
+  
+  # polPago
+  dataClean <- dataClean %>%
+  mutate(polPagoFact = polPago,
+         polPagoFact = relevel(factor(polPagoFact), ref = "Domiciliado"))
+    
+  # geoComunidad
+  dataClean <- dataClean  %>%
+  mutate(geoComunidadFact = case_when(
+    geoComunidad %in% c("Comunidad de Madrid","Cataluña","Andalucía","Castilla-La Mancha") ~ as.character(geoComunidad), 
+    T ~ "OTRAS CCAA"),
+        geoComunidadFact = relevel(factor(geoComunidadFact, c("Comunidad de Madrid","Cataluña","Andalucía","Castilla-La Mancha","OTRAS CCAA")), ref = "Comunidad de Madrid"))
+  
+   # vehPotencia
+   dataClean <- dataClean %>%
+  mutate(
+    
+    vehPotenciaFact = case_when(
+      vehPotencia > 199 ~ "200+",
+      vehPotencia <= 20 ~ "0-20",
+      TRUE ~ NA_character_
+    ),
+
+    
+    vehPotenciaFact = if_else(
+      is.na(vehPotenciaFact),
+      paste0(
+        ((vehPotencia - 1) %/% 20) * 20 + 1, "-",
+        (((vehPotencia - 1) %/% 20) + 1) * 20
+      ),
+      vehPotenciaFact
+    ),
+
+
+    vehPotenciaFact = {
+      etiquetas <- unique(vehPotenciaFact)
+      intermedios <- etiquetas[!etiquetas %in% c("0-20", "200+")]
+      orden_intermedios <- intermedios[order(as.numeric(gsub("[^0-9]", "", intermedios)))]
+      niveles_ordenados <- c("0-20", orden_intermedios, "200+")
+
+     
+      relevel(factor(vehPotenciaFact, levels = niveles_ordenados), ref = "81-100")
+    }
+  )
+  
+   # vehValor     
+   dataClean <- dataClean %>%
+  mutate(
+    vehValorFact = case_when(
+      vehValor <= 15000 ~ "0-15000",
+      vehValor > 15000 & vehValor <= 20000 ~ "15001-20000",
+      vehValor > 20000 & vehValor <= 25000 ~ "20001-25000",
+      vehValor > 25000 & vehValor <= 30000 ~ "25001-30000",
+      vehValor > 30000 & vehValor <= 35000 ~ "30001-35000",
+      vehValor > 35000 & vehValor <= 40000 ~ "35001-40000",
+      vehValor > 40000 & vehValor <= 45000 ~ "40001-45000",
+      vehValor > 45000 & vehValor <= 50000 ~ "45001-50000",
+      vehValor > 50000 & vehValor <= 55000 ~ "50001-55000",
+      vehValor > 55000 ~ "55000+"
+    ),
+        vehValorFact = relevel(factor(vehValorFact, c( "0-15000", "15001-20000", "20001-25000", "25001-30000",
+        "30001-35000", "35001-40000", "40001-45000", "45001-50000","50001-55000", "55000+")), ref = "20001-25000"))
+ 
+   # vehCombustible  
+   dataClean <- dataClean %>%
+    mutate(vehCombustibleFact = vehCombustible,
+           vehCombustibleFact = relevel(factor(vehCombustibleFact, c("Diesel", "Gasolina", "Otros")), ref = "Diesel"))
+   
+  # vehUso
+   dataClean <- dataClean %>%
+    mutate(vehUsoFact = vehUso,
+           vehUsoFact = relevel(factor(vehUsoFact, c("Comercial", "Particular")), ref = "Particular"))
+   
+   # vehClase
+   dataClean <- dataClean %>%
+    mutate(vehClaseFact = case_when(
+    vehClase %in% c("BERLINA","FAMILIAR") ~ as.character(vehClase), 
+    T ~ "OTRO"),
+           vehClaseFact = relevel(factor(vehClaseFact, c("BERLINA","FAMILIAR","OTRO")), ref = "BERLINA"))
+ 
+
+   # vehPuertas
+  dataClean <- dataClean %>%
+  mutate(
+    # Crear variable categórica 'vehPuertasFact' a partir del número de puertas
+    vehPuertasFact = case_when(
+      vehPuertas < 1 ~ "MOTOS",                        # Si tiene menos de 1 puerta, se considera moto
+      vehPuertas >= 2 & vehPuertas <= 4 ~ "ENTRE 2 y 4", # Si tiene entre 2 y 4 puertas, se agrupa así
+      vehPuertas == 5 ~ "5",                           # Si tiene 5 puertas, se clasifica como "5"
+      vehPuertas == 6 ~ "6"                            # Si tiene 6 puertas, se clasifica como "6"
+    ),
+    
+    # Convertir a factor con orden lógico y luego reordenar ref ("5")
+    vehPuertasFact = relevel(
+      factor(vehPuertasFact, levels = c("MOTOS", "ENTRE 2 y 4", "5", "6")),
+      ref = "5"
+    )
+  )
+  
+  
+  # vehLong
+  dataClean <- dataClean %>%
+  mutate(
+    # Agrupar la longitud del vehículo en tramos de 250 desde 3501 hasta 5250
+    vehLongFact = case_when(
+      vehLong <= 3500 ~ "0-3500",
+      vehLong > 3500 & vehLong <= 3750 ~ "3501-3750",
+      vehLong > 3750 & vehLong <= 4000 ~ "3751-4000",
+      vehLong > 4000 & vehLong <= 4250 ~ "4001-4250",
+      vehLong > 4250 & vehLong <= 4500 ~ "4251-4500",
+      vehLong > 4500 & vehLong <= 4750 ~ "4501-4750",
+      vehLong > 4750 & vehLong <= 5000 ~ "4751-5000",
+      vehLong > 5000 & vehLong <= 5250 ~ "5001-5250",
+      vehLong > 5250 ~ "5250+"
+    ),
+    
+    # Convertir a factor con niveles ordenados
+    vehLongFact = relevel(factor(
+      vehLongFact,
+      levels = c(
+        "0-3500", "3501-3750", "3751-4000", "4001-4250", "4251-4500",
+        "4501-4750", "4751-5000", "5001-5250", "5250+")),ref="4251-4500"
+      )
+    )
+  
+  # Nivel de riesgo 
+  dataClean$condScore = as.numeric(dataClean$condScore)
+
+dataClean <- dataClean %>%
+  mutate(
+    # Clasificamos condScore en niveles de riesgo
+    scoreNivel = case_when(
+      is.na(condScore) ~ "Desconocido",
+      condScore <= 2 ~ "Riesgo bajo",
+      condScore >= 3 & condScore <= 5 ~ "Riesgo medio",
+      condScore >= 6 ~ "Riesgo alto"
+    ),
+    
+    # Clasificamos vehValor en tramos
+    valorNivel = case_when(
+      is.na(vehValor) ~ "Desconocido",
+      vehValor <= 20000 ~ "Valor bajo",
+      vehValor > 20000 & vehValor <= 25000 ~ "Valor medio",
+      vehValor > 25000 ~ "Valor alto"
+    ),
+    
+    # Combinamos ambas en variable categórica
+    Nivel_Riesgo = case_when(
+      scoreNivel == "Desconocido" | valorNivel == "Desconocido" ~ "Desconocido",
+      TRUE ~ paste(scoreNivel, valorNivel, sep = " - ")
+    ),
+    
+    # Convertimos a factor ordenado y fijamos el nivel base
+    Nivel_RiesgoFact = relevel(factor(
+      Nivel_Riesgo,
+      levels = c(
+        "Riesgo bajo - Valor bajo", "Riesgo bajo - Valor medio", "Riesgo bajo - Valor alto",
+        "Riesgo medio - Valor bajo", "Riesgo medio - Valor medio", "Riesgo medio - Valor alto",
+        "Riesgo alto - Valor bajo", "Riesgo alto - Valor medio", "Riesgo alto - Valor alto",
+        "Desconocido"
+      )
+    ), ref = "Riesgo bajo - Valor bajo")
+  )
+
+   # Quitar la variables antiguas y quedarse con las nuevas, con el nombre original
+   vecRFactorsNamesOld <- str_remove_all(colnames(dataClean)[str_detect(colnames(dataClean), "Fact")],"Fact")
+   
+   dataModel <- dataClean %>% select(-vecRFactorsNamesOld)
+   
+   colnames(dataModel) <- str_remove_all(colnames(dataModel),"Fact")
+   
+   return(dataModel)
+}
+  
+```
+
+### Función ModelAnalysisFinal
+
+Se programa una función que calcule los efectos marginales y métricas predictivas por niveles de factores.
+
+```{r 0.2.9. Funcion ModelAnalysisFinal, message=FALSE, warning=FALSE}
+
+# Auxiliar para ejecutar paso a paso la función
+# model <- glmFreqFinalSimplifiedModel
+# modelNoPol <- glmFreqFinalSimplifiedModel
+# data <- dataModelFreqFinal
+# target <- "NsinCorpRC"
+# weight <- "Exposicion"
+# vecVars <-  finalFullFactors
+# listOrderFactLevels <- listOrderFactLevels
+# funModPol <- finalChangesModFreqPol
+# CompareModels <- F
+
+# ModelAnalysisFinal: función para calcular todas las métricas de un modelo.
+
+ModelAnalysisFinal <- function(model, modelNoPol, data, target, weight, vecVars, listOrderFactLevels = NULL, funModPol = NULL, CompareModels=F){
+
+  # Nivel base de cada factor (el primer nivel de cada variable)
+  vecBaseLevels <- data %>% dplyr::select(vecVars) %>% sapply(function(x){levels(x)[1]})
+
+  # Función auxiliar para ordenar niveles (alfabético, numérico o por rangos)
+  orderLevelsRatingFactorsForPlots <- function(x){
+    x <- levels(x)
+    
+    if((str_detect(x,".[[-]].") %>% sum) > 0){
+      startOrder <- str_locate(x,".[[-]].")[,1]
+      xNumeric <-  ifelse(is.na(startOrder), str_remove_all(x,"[[+]]"), str_sub(x,1,startOrder)) %>% as.numeric
+      xOrdered <- x[xNumeric %>% order]
+    } else if(is.numeric(as.numeric(x))){
+      xNumeric <-  x %>% str_remove_all("[[+-]]") %>% as.numeric
+      xOrdered <- x[xNumeric %>% order]
+    } else {
+      xOrdered <- x
+    }
+
+    return(xOrdered)
+  }
+
+  # Si no se pasa un orden personalizado, se ordenan los niveles automáticamente
+  listVarLevels <- if(is.null(listOrderFactLevels)){
+    data %>% dplyr::select(vecVars) %>% lapply(function(x){orderLevelsRatingFactorsForPlots(x)})
+  } else {
+    listOrderFactLevels[which(names(listOrderFactLevels) %in% vecVars)]
+  }
+
+  # Función auxiliar para generar combinaciones de niveles para efectos marginales
+  dfVarsLevelsAndBase <- function(i){
+    dfInter <- data.frame(matrix(nrow = length(listVarLevels[[i]]), ncol = length(vecVars)+2))
+    colnames(dfInter) <- c("Factor", "Level", vecVars)
+
+    listVarsModelLoop <- list(vecVars[i])
+    listVarLevelsRenameLoop <-  listVarLevels[i]
+    names(listVarsModelLoop) <- "Factor"
+    names(listVarLevelsRenameLoop) <- "Level"
+
+    # Crear lista con valores a reemplazar
+    listReplace <- c(listVarsModelLoop, listVarLevelsRenameLoop,
+                     lapply(vecBaseLevels[setdiff(names(vecBaseLevels), vecVars[i])], function(j){j}),
+                     listVarLevels[i])
+
+    dfInter[names(listReplace)] <- listReplace
+
+    # Sustituir niveles con 0 exposición por el nivel base
+    listCount <- data %>% select(vecVars[i]) %>% table %>% as.list
+    levelsNoWeight <- listCount[listCount==0] %>% names
+
+    dfInter <- dfInter %>% mutate(!!sym(vecVars[i]) := ifelse(get(vecVars[i]) %in% levelsNoWeight, 
+                                                              as.character(vecBaseLevels[i]), 
+                                                              get(vecVars[i])))
+    return(dfInter)
+  }
+
+  # Crear la matriz con combinaciones por factor
+  listCMData <- lapply(1:length(vecVars), dfVarsLevelsAndBase)
+
+  # Juntar todas las combinaciones y aplicar función de polinomios si procede
+  CMData <- listCMData %>% bind_rows %>% mutate(!!sym(weight) := 1)
+  CMData <- if(is.null(funModPol)){CMData}else{CMData %>% funModPol} 
+
+  # Función para calcular efectos marginales con un modelo
+  CalcMarginalEffects <- function(model, CMData){
+    linearPredBaseLevel <- as.numeric(predict(model, newdata = CMData %>%  
+                              filter(Factor == names(vecBaseLevels)[1], Level==vecBaseLevels[1]), 
+                              type = "link"))
+
+    MarginalEffects <- CMData %>% 
+      mutate(LinearPredictor = predict(model, newdata = CMData, type = "link"),
+             PredictedValues = predict(model, newdata = CMData, type = "response"),
+             RescaledLinearPredictor = predict(model, newdata = CMData, type = "link") - linearPredBaseLevel,
+             RescaledPredictedValues = exp(RescaledLinearPredictor)) %>% 
+      dplyr::select(Factor, Level, LinearPredictor, PredictedValues, 
+                    RescaledLinearPredictor, RescaledPredictedValues)
+
+    return(MarginalEffects)
+  }
+
+  # Calcular efectos marginales para ambos modelos
+  MarginalEffects <- CalcMarginalEffects(model, CMData)
+  MarginalEffectsNoPol <- CalcMarginalEffects(modelNoPol, CMData)
+
+  colnames(MarginalEffectsNoPol) <- c(colnames(MarginalEffects)[1:2], 
+                                      paste0("NoPol_",colnames(MarginalEffects)[3:length(colnames(MarginalEffects))]))
+
+  # Si no se comparan modelos, sustituir columnas NoPol por NA
+  MarginalEffectsNoPol <- if(CompareModels == TRUE){
+    MarginalEffectsNoPol
+  } else {
+    MarginalEffectsNoPol %>% mutate(
+      NoPol_LinearPredictor = NA,
+      NoPol_PredictedValues = NA,
+      NoPol_RescaledLinearPredictor = NA,
+      NoPol_RescaledPredictedValues = NA
+    )
+  }
+
+  # Unir efectos marginales con y sin polinomios
+  MarginalEffectsTotal <- left_join(MarginalEffects, MarginalEffectsNoPol, by = c("Factor","Level"))
+
+  # Función para calcular exposición, valor observado y predicho por nivel
+  calcExpObsPredByLevels <- function(factor, data, model){
+    data %>% 
+      select(factor, target, weight) %>% 
+      mutate(PredNoExp = predict(model, data, "response")) %>% 
+      group_by(get(factor)) %>% 
+      summarise(Factor = factor,
+                Exp = sum(get(weight)),
+                Obs = sum(get(target))/sum(get(weight)),
+                Pred = sum(PredNoExp)/sum(get(weight))) %>% 
+      rename(Level=`get(factor)`) %>% 
+      select(Factor, Level, Exp, Obs, Pred)
+  }
+
+  # Calcular las métricas observadas y predichas por nivel
+  DataExpObsPred <- bind_rows(lapply(vecVars, function(x){calcExpObsPredByLevels(x,data,model)}))
+
+  # Unir todo en una sola tabla final, respetando el orden correcto
+  FullDataMetrics <-  left_join(MarginalEffectsTotal, DataExpObsPred, by = c("Factor","Level"))
+  
+   return(FullDataMetrics)
+
+}
+
+```
+
+### Función modelAnalysisPlotsFinal
+
+Se programa una función para graficar las tendencias marginales de los modelos.
+
+```{r 0.2.10. Funcion modelAnalysisPlotsFinal, message=FALSE, warning=FALSE}
+
+modelAnalysisPlotsFinal <- function(dataMetrics, metric1, metric2, factor, colorLine1, colorLine2, sizeXaxis, angleXaxis, vjustXaxis, hjustXaxis){
+
+dataPlot <- dataMetrics %>% filter(Factor == factor)
+
+# Límites para la métrica principal
+ylim.prim <- c(0, max(dataPlot$Exp, na.rm = TRUE))
+ylim.sec <- c(min(dataPlot[,metric1], na.rm = TRUE), max(dataPlot[,metric1], na.rm = TRUE))
+
+# Coeficientes de transformación para escalar la métrica 1 y 2
+b <- diff(ylim.prim)/diff(ylim.sec)
+a <- ylim.prim[1] - b*ylim.sec[1]
+
+vecOrderedLabels <- dataMetrics %>% filter(Factor == factor) %>% .$Level %>% unique()
+
+dataMetrics %>%
+  filter(Factor == factor) %>%
+  mutate(Level = factor(Level, levels = vecOrderedLabels)) %>%
+  ggplot() +
+  
+  # Gráfico de barras
+  geom_col(aes(x = Level, y = Exp), group = 1, position = "stack", fill = "yellow", colour = "black", alpha = .4) +
+  
+    # Línea y puntos para la métrica 2 (naranja)
+  geom_line(aes(x = Level, y = a + get(metric2) * b, color = "Model Unsimplified"), group = 1, size = 0.6, linetype = "dashed") +
+  geom_point(aes(x = Level, y = a + get(metric2) * b, color = "Model Unsimplified"), size = 2) +
+  
+  # Línea y puntos para la métrica 1 (verde) - primero para que esté delante
+  geom_line(aes(x = Level, y = a + get(metric1) * b, color = "Model Prediction at Base levels"), group = 1, size = 0.6) +
+  geom_point(aes(x = Level, y = a + get(metric1) * b, color = "Model Prediction at Base levels"), size = 2) +
+  
+  # Ejes Y
+  scale_y_continuous(sec.axis = sec_axis(~ (. - a) / b, name = metric1), name = "Exp") +
+  
+  # Personalizar la leyenda
+  scale_color_manual(values = c("Model Prediction at Base levels" = colorLine1, "Model Unsimplified" = colorLine2)) +
+  
+  xlab(factor) +
+  ylab("Exp") +
+  
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = angleXaxis, vjust = vjustXaxis, hjust=hjustXaxis, size = sizeXaxis),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14, face = "bold"),
+        legend.position = "bottom", 
+        legend.title = element_blank())
+}
+
+```
+
+### Función modelPredObsPlotsFinal
+
+Se programa una función para graficar el AvE (Actual versus Expected)
+
+```{r 0.2.11. Función modelPredObsPlotsFinal }
+
+modelPredObsPlotsFinal <- function(dataMetrics, metric1, metric2, factor, colorLine1, colorLine2, sizeXaxis, angleXaxis, vjustXaxis, hjustXaxis){
+
+dataPlot <- dataMetrics %>% filter(Factor == factor)
+
+# Límites para la métrica principal
+ylim.prim <- c(0, max(dataPlot$Exp, na.rm = TRUE))
+ylim.sec <- c(min(dataPlot[,metric1], na.rm = TRUE), max(dataPlot[,metric1], na.rm = TRUE))
+
+# Coeficientes de transformación para escalar la métrica 1 y 2
+b <- diff(ylim.prim)/diff(ylim.sec)
+a <- ylim.prim[1] - b*ylim.sec[1]
+
+vecOrderedLabels <- dataMetrics %>% filter(Factor == factor) %>% .$Level %>% unique()
+
+dataMetrics %>%
+  filter(Factor == factor) %>%
+  mutate(Level = factor(Level, levels = vecOrderedLabels)) %>%
+  ggplot() +
+  
+  # Gráfico de barras
+  geom_col(aes(x = Level, y = Exp), group = 1, position = "stack", fill = "yellow", colour = "black", alpha = .4) +
+  
+    # Línea y puntos para la métrica 2 (naranja)
+  geom_line(aes(x = Level, y = a + get(metric2) * b, color = "Prediction"), group = 1, size = 0.6, linetype = "dashed") +
+  geom_point(aes(x = Level, y = a + get(metric2) * b, color = "Prediction"), size = 2) +
+  
+  # Línea y puntos para la métrica 1 (verde) - primero para que esté delante
+  geom_line(aes(x = Level, y = a + get(metric1) * b, color = "Observed"), group = 1, size = 0.6) +
+  geom_point(aes(x = Level, y = a + get(metric1) * b, color = "Observed"), size = 2) +
+  
+  # Ejes Y
+  scale_y_continuous(sec.axis = sec_axis(~ (. - a) / b, name = metric1), name = "Exp") +
+  
+  # Personalizar la leyenda
+  scale_color_manual(values = c("Observed" = colorLine1, "Prediction" = colorLine2)) +
+  
+  xlab(factor) +
+  ylab("Exp") +
+  
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = angleXaxis, vjust = vjustXaxis, hjust=hjustXaxis, size = sizeXaxis),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14, face = "bold"),
+        legend.position = "bottom", 
+        legend.title = element_blank())
+}
+
+```
+
+### Función calc_cramerV
+
+Función para calcular la V de Cramer entre dos variables categóricas:
+
+```{r 0.2.12. Función calc_cramerV}
+
+calc_cramerV <- function(data, var1, var2) {
+  table <- table(droplevels(data[, var1]), droplevels(data[, var2]))
+  cramerV(table)
+}
+
+```
+
+### Función comparar_modelos_glm
+
+Función para comparar dos modelos glm diferenciados por una sola variable
+
+```{r 0.2.13. Función comparar_modelos_glm}
+
+comparar_modelos_glm <- function(modelo_sin, modelo_con) {
+  n <- length(modelo_con$y)
+  k_con <- length(coef(modelo_con))
+  k_sin <- length(coef(modelo_sin))
+  
+  
+  AICc <- function(modelo, k) {
+    aic <- AIC(modelo)
+    aic + (2 * k * (k + 1)) / (n - k - 1)
+  }
+  
+  aicc_con <- AICc(modelo_con, k_con)
+  aicc_sin <- AICc(modelo_sin, k_sin)
+  delta_aicc <- aicc_con - aicc_sin
+  
+  dev_con <- deviance(modelo_con)
+  dev_sin <- deviance(modelo_sin)
+  delta_dev <- dev_con - dev_sin 
+  
+
+  
+  resultado <- list(
+    AICc_modelo_con = aicc_con,
+    AICc_modelo_sin = aicc_sin,
+    Delta_AICc = delta_aicc,
+    Devianza_modelo_con = dev_con,
+    Devianza_modelo_sin = dev_sin,
+    Delta_Devianza = delta_dev
+  )
+  
+  return(resultado)
+}
+
+```
+
+### Función finalChangesModFreqNoPol
+
+Función para el diseño del modelo final. Cambios en la base de datos.
+
+```{r 0.2.14. Función finalChangesModFreqNoPol}
+
+finalChangesModFreqNoPol <- function(dataModel){
+  
+  dataModelFinal <- dataModel %>%  
+  mutate(condCarneFin = relevel(factor(case_when( # Se agrupan los niveles extremos
+    condCarne %in% as.character(0:4) ~ "0-4",
+    condCarne %in% as.character(55:59) | condCarne %in% c("60+", "+60") ~ "55+",
+    TRUE ~ condCarne
+  ), levels = c("0-4", as.character(5:54), "55+")), ref = "35"),
+           
+  condScoreFin = relevel(factor(case_when( # Se agrupan los niveles de 4 a 7.
+           condScore %in% c("4","5","6","7") ~ "4+", 
+           condScore == "Nuevos" ~ "Nuevos", 
+           T ~ condScore
+         ), levels = c(as.character(1:3), "4+", "Nuevos")), ref = "1"),
+          
+  polAntiguedadFin = polAntiguedad, # No se lleva a cabo ninguna actuación sobre esta variable.
+  
+  polTipoFin = polTipo, # No se lleva a cabo ninguna actuación sobre esta variable.
+  
+  geoComunidadFin = relevel(factor(case_when( # Se deja sola la "Comunidad de Madrid y se agrupan el resto
+           geoComunidad == "Comunidad de Madrid" ~ "Comunidad de Madrid", 
+           T ~ "Resto"
+         ), levels = c("Comunidad de Madrid", "Resto")), ref = "Comunidad de Madrid"),
+  
+  vehValorFin = relevel(factor(case_when( # Se agrupan los niveles extremos por encima de los 50k euros puesto que es donde la tendencia se distrosiona
+    vehValor %in% c("50001-55000", "55000+") ~ "50k+",
+    TRUE ~ vehValor
+  ), levels = c(levels(dataModel$vehValor)[1:8],"50k+")), ref = "20001-25000"),
+  
+  vehPuertasFin = relevel(factor(case_when( # Se agrupan las motos con los niveles de 2 a 4
+           vehPuertas == "5" ~ "5",
+           vehPuertas == "6" ~ "6",
+           T ~ "-4"
+         ), levels = c("-4", "5","6")), ref = "5"),
+  
+  vehLongFin = relevel(factor(case_when( # Se agrupan los niveles extremos por encima de los 50k euros puesto que es donde la tendencia se distrosiona
+    vehLong %in% c("5001-5250","5250+") ~ "5k+",
+    TRUE ~ vehLong
+  ), levels = c(levels(dataModel$vehLong)[1:7],"5k+")), ref = "4251-4500"),
+  
+  # Meto también las variables que no entraron en el modelo final:
+  
+  polPagoFin = polPago,
+  
+  vehPotenciaFin = vehPotencia,
+  
+  vehCombustibleFin = vehCombustible,
+  
+  vehUsoFin = vehUso,
+  
+  vehClaseFin = vehClase,
+  
+  Nivel_RiesgoFin = Nivel_Riesgo
+  
+  )
+  
+   return(dataModelFinal)
+}
+  
+```
+
+### Función finalChangesModFreqPol
+
+Función para el diseño de los polinomios de las variables **condCarne**, **vehValor** y **vehLong**
+
+```{r 0.2.15. Función finalChangesModFreqPol}
+
+finalChangesModFreqPol <- function(dataModel){
+  
+  dataModelFinal <- dataModel %>%  
+  mutate(condCarneFinNumPOL1 = as.numeric(case_when( # No se divide el polinómio. Se hace uno entero.
+  condCarneFin == "0-4" ~ 4,
+  condCarneFin == "5" ~ 5,
+  condCarneFin == "6" ~ 6,
+  condCarneFin == "7" ~ 7,
+  condCarneFin == "8" ~ 8,
+  T ~ 9 )),
+  condCarneFinNumPOL2 = as.numeric(case_when(
+  condCarneFin == "9" ~ 9,
+  condCarneFin == "10" ~ 10,
+  condCarneFin == "11" ~ 11,
+  condCarneFin == "12" ~ 12,
+  condCarneFin == "13" ~ 13,
+  condCarneFin == "14" ~ 14,
+  condCarneFin == "15" ~ 15,
+  condCarneFin == "16" ~ 16,
+  condCarneFin == "17" ~ 17,
+  condCarneFin == "18" ~ 18,
+  condCarneFin == "19" ~ 19,
+  condCarneFin == "20" ~ 20,
+  condCarneFin == "21" ~ 21,
+  condCarneFin == "22" ~ 22,
+  condCarneFin == "23" ~ 23,
+  condCarneFin == "24" ~ 24,
+  condCarneFin == "25" ~ 25,
+  condCarneFin == "26" ~ 26,
+  condCarneFin == "27" ~ 27,
+  condCarneFin == "28" ~ 28,
+  condCarneFin == "29" ~ 29,
+  condCarneFin == "30" ~ 30,
+  condCarneFin == "31" ~ 31,
+  condCarneFin == "32" ~ 32,
+  condCarneFin == "33" ~ 33,
+  condCarneFin == "34" ~ 34,
+  condCarneFin == "35" ~ 35,
+  condCarneFin == "36" ~ 36,
+  condCarneFin == "37" ~ 37,
+  condCarneFin == "38" ~ 38,
+  condCarneFin == "39" ~ 39,
+  condCarneFin == "40" ~ 40,
+  condCarneFin == "41" ~ 41,
+  condCarneFin == "42" ~ 42,
+  condCarneFin == "43" ~ 43,
+  condCarneFin == "44" ~ 44,
+  condCarneFin == "45" ~ 45,
+  condCarneFin == "46" ~ 46,
+  condCarneFin == "47" ~ 47,
+  condCarneFin == "48" ~ 48,
+  condCarneFin == "49" ~ 49,
+  condCarneFin == "50" ~ 50,
+  condCarneFin == "51" ~ 51,
+  condCarneFin == "52" ~ 52,
+  condCarneFin == "53" ~ 53,
+  condCarneFin == "54" ~ 54,
+  condCarneFin == "55+" ~ 54,
+  T ~ 8
+)),
+
+  vehValorFinNumPOL = as.numeric(case_when( # No se divide el polinómio. Se hace uno entero.
+  vehValorFin == "0-15000" ~ 7500,
+  vehValorFin == "15001-20000" ~ 15001,
+  vehValorFin == "20001-25000" ~ 20001,
+  vehValorFin == "25001-30000" ~ 25001,
+  vehValorFin == "30001-35000" ~ 30001,
+  vehValorFin == "35001-40000" ~ 35001,
+  vehValorFin == "40001-45000" ~ 40001,
+  vehValorFin == "45001-50000" ~ 40001,
+  vehValorFin == "50k+" ~ 40001)),
+
+vehLongFinNumPOL = as.numeric(case_when( # No se divide el polinómio. Se hace uno entero.
+    vehLongFin == "0-3500" ~ 3500,
+    vehLongFin == "3501-3750" ~ 3501,
+    vehLongFin == "3751-4000" ~ 3751,
+    vehLongFin == "4001-4250" ~ 4001,
+    vehLongFin == "4251-4500" ~ 4251,
+    vehLongFin == "4501-4750" ~ 4501,
+    vehLongFin == "4751-5000" ~ 4751,
+    vehLongFin == "5k+" ~ 5000)),
+
+)
+  
+  return(dataModelFinal)
+}
+
+```
+
+### Función impactAnalysisPlot
+
+Esta función se utiliza para generar un gráfico combinado que permita visualizar simultáneamente: 1) La distribución del peso (por ejemplo, exposición) en diferentes bandas de predicción (PredictedBands) y 2) La comparación entre: a) La métrica observada (por ejemplo, siniestralidad observada por banda) y b) La métrica predicha (por ejemplo, siniestralidad estimada por el modelo).
+
+```{r 0.2.16. Función impactAnalysisPlot}
+
+impactAnalysisPlot <- function(dataMetrics, metric1, metric2, factor, colorLine1, colorLine2, sizeXaxis, angleXaxis, vjustXaxis, hjustXaxis){
+
+  # 1. Definir los límites del eje Y principal (para el gráfico de barras, que representa el peso)
+  ylim.prim <- c(0, max(dataMetrics$Weight, na.rm = TRUE))
+
+  # 2. Definir los límites del eje Y secundario (para las métricas observada y predicha)
+  ylim.sec <- c(min(dataMetrics[,metric1], na.rm = TRUE), max(dataMetrics[,metric1], na.rm = TRUE))
+
+  # 3. Calcular los coeficientes de transformación lineal para superponer las líneas sobre el eje primario
+  b <- diff(ylim.prim)/diff(ylim.sec)   # Escala entre pesos y métricas
+  a <- ylim.prim[1] - b * ylim.sec[1]   # Ajuste para que coincida el mínimo de ambos ejes
+
+  # 4. Comienza el gráfico con ggplot
+  dataMetrics %>%
+    ggplot() +
+
+    # 5. Gráfico de barras para el peso (por ejemplo, exposición o número de observaciones)
+    geom_col(
+      aes(x = PredictedBands, y = Weight),
+      group = 1,
+      position = "stack",
+      fill = "yellow",
+      colour = "black",
+      alpha = 0.4
+    ) +
+
+    # 6. Línea y puntos para la métrica predicha (metric2), usando eje secundario (transformado)
+    geom_line(
+      aes(x = PredictedBands, y = a + get(metric2) * b, color = "Prediction"),
+      group = 1,
+      size = 0.6,
+      linetype = "dashed"
+    ) +
+    geom_point(
+      aes(x = PredictedBands, y = a + get(metric2) * b, color = "Prediction"),
+      size = 2
+    ) +
+
+    # 7. Línea y puntos para la métrica observada (metric1), también transformada al eje primario
+    geom_line(
+      aes(x = PredictedBands, y = a + get(metric1) * b, color = "Observed"),
+      group = 1,
+      size = 0.6
+    ) +
+    geom_point(
+      aes(x = PredictedBands, y = a + get(metric1) * b, color = "Observed"),
+      size = 2
+    ) +
+
+    # 8. Definir ambos ejes Y (secundario para métricas, primario para peso)
+    scale_y_continuous(
+      name = "Weight",
+      sec.axis = sec_axis(~ (. - a) / b, name = "Target")  # transforma valores al eje secundario
+    ) +
+
+    # 9. Asignar colores a las líneas
+    scale_color_manual(values = c("Observed" = colorLine1, "Prediction" = colorLine2)) +
+
+    # 10. Etiquetas de los ejes
+    xlab(factor) +
+    ylab("Weight") +
+
+    # 11. Personalizar el tema gráfico
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(angle = angleXaxis, vjust = vjustXaxis, hjust = hjustXaxis, size = sizeXaxis),
+      axis.text = element_text(size = 12),
+      axis.title = element_text(size = 14, face = "bold"),
+      legend.position = "bottom",
+      legend.title = element_blank()
+    )
+}
+
+```
+
+### Función impactAnalysis
+
+Esta función se utiliza para analizar la calibración del modelo en distintas franjas de riesgo, ver si el modelo sobrestima o subestima consistentemente en ciertas franjas y validar si el modelo discrimina bien los grupos de mayor y menor riesgo
+
+```{r 0.2.17. Función impactAnalysis}
+
+impactAnalysis <- function(model, data, target, weight, nBands) {
+  
+  # 1. Calcular columnas de interés: valor observado, predicho y peso
+  dataActualPredicted <- data %>% 
+    mutate(
+      Actual = get(target),  # valor observado (por ejemplo, número de siniestros)
+      Weight = get(weight),  # exposición
+      Predicted = predict(model, data %>% mutate(!!sym(weight) := 1), "response"),  # predicción sin ponderación
+      PredictedWeighted = Predicted * Weight  # predicción ajustada por exposición
+    ) %>%
+    dplyr::select(Actual, Predicted, PredictedWeighted, Weight)
+
+  # 2. Calcular puntos de corte para los "nBands" grupos iguales en peso total
+  peso_total <- sum(dataActualPredicted$Weight, na.rm = TRUE)
+  puntos_corte <- seq(0, peso_total, length.out = nBands + 1)
+
+  # 3. Crear tabla para análisis por bandas de riesgo
+  dataImpactAnalysis <- dataActualPredicted %>%
+    arrange(Predicted) %>%  # ordenar por predicción
+    mutate(
+      peso_total = sum(Weight),
+      peso_objetivo = peso_total / nBands,
+      peso_acumulado = cumsum(Weight)  # peso acumulado para asignar bandas
+    ) %>%
+    mutate(
+      PredictedBands = findInterval(peso_acumulado, puntos_corte, rightmost.closed = TRUE)  # asignar banda
+    ) %>% 
+    dplyr::select(Actual, Predicted, PredictedWeighted, Weight, PredictedBands) %>%
+    group_by(PredictedBands) %>% 
+    summarise(
+      sumActual = sum(Actual),
+      sumPredictedWeighted = sum(PredictedWeighted),
+      sumWeight = sum(Weight),
+      N = n(),  # número de observaciones en la banda
+      .groups = "drop"
+    ) %>% 
+    mutate(
+      Actual = sumActual / sumWeight,
+      Predicted = sumPredictedWeighted / sumWeight,
+      Weight = sumWeight
+    ) %>%
+    dplyr::select(PredictedBands, Actual, Predicted, Weight)
+
+  # 4. Generar gráfico de impacto usando la función anterior
+  impactAnalysisPlot(dataImpactAnalysis, "Actual", "Predicted", "PredictedBands", 
+                     "darkred", "blue", 7, 90, 0.5, 1)
+}
+
+```
+
+### Función finalChangesModSevNoPol
+
+Función que me permite preparar las variables para el modelo final de severidad
+
+```{r 0.2.18. finalChangesModSevNoPol}
+
+finalChangesModSevNoPol<- function(dataModel){
+  
+  dataModelSevFinal<- dataModel %>%  
+  mutate(condCarneFin = relevel(factor(case_when( # Se agrupan los niveles extremos
+    condCarne %in% as.character(0:4) ~ "0-4",
+    condCarne %in% as.character(55:59) | condCarne %in% c("60+", "+60") ~ "55+",
+    TRUE ~ condCarne
+  ), levels = c("0-4", as.character(5:54), "55+")), ref = "35"),
+           
+  condScoreFin = condScore, # No se lleva a cabo ninguna actuación sobre esta variable.
+          
+  polAntiguedadFin = polAntiguedad, # No se lleva a cabo ninguna actuación sobre esta variable.
+  
+  polTipoFin = polTipo, # No se lleva a cabo ninguna actuación sobre esta variable.
+  
+  geoComunidadFin = relevel(factor(case_when( # Se deja sola la "Comunidad de Madrid y se agrupan el resto
+           geoComunidad == "Comunidad de Madrid" ~ "Comunidad de Madrid", 
+           T ~ "Resto"
+         ), levels = c("Comunidad de Madrid", "Resto")), ref = "Comunidad de Madrid"),
+  
+  vehValorFin =  vehValor, # No se lleva a cabo ninguna actuación sobre esta variable.
+  
+  vehPuertasFin = relevel(factor(case_when( # Se agrupan las motos con los niveles de 2 a 4
+           vehPuertas == "5" ~ "5",
+           vehPuertas == "6" ~ "6",
+           T ~ "-4"
+         ), levels = c("-4", "5","6")), ref = "5"),
+  
+  vehLongFin = relevel(factor(case_when( # Se agrupan los niveles extremos por encima de los 50k euros puesto que es donde la tendencia se distrosiona
+    vehLong %in% c("5001-5250","5250+") ~ "5k+",
+    TRUE ~ vehLong
+  ), levels = c(levels(dataModel$vehLong)[1:7],"5k+")), ref = "4251-4500"),
+  
+  # Meto también las variables que no entraron en el modelo final:
+  
+  polPagoFin = polPago,
+  
+  vehPotenciaFin = vehPotencia,
+  
+  vehCombustibleFin = vehCombustible,
+  
+  vehUsoFin = vehUso,
+  
+  vehClaseFin = vehClase,
+  
+  Nivel_RiesgoFin = Nivel_Riesgo
+  
+  )
+  
+  return(dataModelSevFinal)
+}
+
+```
+
+# VARIABLES INICIALES Y CARGA DE DATOS
+
+## Variables iniciales
+
+Se inIcia el ejercicio introduciendo las variables que me aportan mis compañeros para familiarizarme con ellas e identificar posibles futuras actuacioens que deberé tener en cuenta durante el ejercicio. A priori identifico lo siguiente:
+
+1. Existen varias variables numéricas, las cuales son susceptibles de segmentar su rango apra encontrar los mas significativos.
+2. Existen varias variables categóricas, las cuales tendré que tener en cuenta para declararlas como factor.
+3. La variable polTipoPago, considero que debe ser separada en dos, pues aporta dos informaciones distintas, lo cual considero que puede ser útil si independizo tal información.
+
+```{r 1.1. Variables iniciales}
+
+library(knitr)
+
+tabla_vars <- data.frame(
+  Variable = c("poliza", "samples", "condCarne", "condScore", "polAntiguedad", 
+               "polTipoPago", "geoComunidad", "vehPotencia", "vehValor", "vehCombustible", 
+               "vehUso", "vehClase", "vehPuertas", "vehLong", "Exposicion", 
+               "NSinMatRC", "CSinMatRC"),
+  Descripcion = c(
+    "Número de póliza",
+    "Variable binaria que identifica la muestra de modelización y la de validación",
+    "Antigüedad en años del carné del asegurado/conductor",
+    "Calificación crediticia del asegurado, 1 (muy buena) a 7 (muy mala), 99 = sin info",
+    "Antigüedad de la póliza en años",
+    "Tipo de pago de la prima según forma y frecuencia",
+    "Comunidad autónoma del tomador",
+    "Potencia del vehículo en caballos",
+    "Valor del vehículo al firmar el contrato en euros",
+    "Tipo de combustible: gasolina, diésel, otros",
+    "Uso del vehículo: particular o comercial",
+    "Clase del vehículo, ej. berlina",
+    "Número de puertas del vehículo",
+    "Longitud del vehículo en mm",
+    "Periodo en años que la póliza ha estado vigente",
+    "Nº de siniestros por RC daños materiales",
+    "Cuantía reclamada por RC daños materiales"
+  ),
+  Tipo_Modelo = c("CONTEO", "FACTOR", "CONTEO", "FACTOR", "CONTEO", 
+                  "FACTOR", "FACTOR", "CONTEO", "SEGMENTAR", "FACTOR", 
+                  "FACTOR", "FACTOR", "CONTEO", "CONTEO", "SEGMENTAR", 
+                  "CONTEO", "SEGMENTAR"),
+  Tipo_Variable = c("Numérica - Discreta", "Factor", "Numérica - Discreta", "Factor", "Numérica - Discreta", 
+                    "Factor", "Factor", "Numérica - Discreta", "Numérica", "Factor", 
+                    "Factor", "Factor", "Numérica - Discreta", "Numérica - Discreta", "Numérica", 
+                    "Numérica - Discreta", "Numérica"),
+  Variable_Exp_Obj = c("Explicativa", "Explicativa", "Explicativa", "Explicativa", "Explicativa", 
+                    "Explicativa", "Explicativa", "Explicativa", "Explicativa", "Explicativa", 
+                    "Explicativa", "Explicativa", "Explicativa", "Explicativa", "Objetivo", 
+                    "Objetivo", "Objetivo")
+)
+
+kable(tabla_vars,
+      caption = "Descripción de las variables del modelo",
+      format = "html",
+      table.attr = "class='tabla-con-titulo-grande'") %>%
+  kable_styling(full_width = FALSE, position = "center", bootstrap_options = c("striped"))
+
+```
+
+## Carga de datos
+
+A continuación, se cargan los datos, los cuales son reales provenientes de una entidad aseguradora española tras haber sido anonimizados. 
+
+Se muestra una muestra de los mismos.
+
+```{r 1.2. Carga de datos}
+
+data <- as.data.frame(read.csv('datosRiesgoCasoPracticoFinal.csv', encoding = "latin1")) 
+data %>% head(1000) %>% reactViewTableTarget(c( "Exposicion","NsinMatRC", "CsinMatRC", "NsinCorpRC","CsinCorpRC"))
+  
+dim(data)
+
+```
+
+# EJERCICIO 1: ANÁLISIS EXPLORATORIO DE LAS VARIABLES (EDA)
+
+## Variables categóricas
+
+Paso las variables factor del dataframe data a variables categóricas. 
+
+```{r 2.1. Variables categóricas}
+
+# Filtro en primer lugar las variables categóricas del dataframe "tabla_vars":
+
+vars_factor <- tabla_vars %>%
+  filter(Tipo_Variable == "Factor") %>%
+  pull(Variable)
+
+# Convierto automáticamente las columnas correspondientes a factor
+
+data[ , vars_factor] <- lapply(data[ , vars_factor], as.factor)
+
+# Compruebo que todas las variables categóricas se han pasado a factor:
+
+str(data)
+
+```
+
+## Variable polTipoPago
+
+Divido la variable polTipoPago en dos variables polTipo y polPago. De modo que:
+
+```{r 2.2. Variable polTipoPago}
+
+data <- data %>%
+  separate(col = polTipoPago,
+           into = c("polTipo", "polPago"),
+           sep = "-",
+           remove = TRUE)  # Si pones TRUE, elimina la original
+
+#Convierto estas dos variables también a factor:
+
+data[ , c("polTipo","polPago")] <- lapply(data[ , c("polTipo","polPago")], as.factor)
+
+# Muestro de nuevo los datos con estas dos variables separadas:
+data %>% head(1000) %>% reactViewTableTarget(c( "Exposicion","NsinMatRC", "CsinMatRC", "NsinCorpRC","CsinCorpRC"))
+str (data)
+
+```
+
+## EDA de cada variable objetivo
+
+Se procede a hacer el análisis exploratorio de cada variable objetivo. Buscamos ganar entendimiento de las variables objetivo y entender si van acorde con las distribuciones y características predefinidas. Así, como buscar coherencia entre sí y detectar potenciales errores que requieran correcciones.
+
+### Varible Exposicion
+
+```{r 2.3. Variable Exposicion, message=FALSE, warning=FALSE}
+
+data %>% edaSumCont("Exposicion")
+data %>% edaHistCont("Exposicion")
+data %>% edaDensityNum("Exposicion", max(data$Exposicion))
+
+```
+
+Tiene sentido todo, aunque hay muchas pólizas con exposición 1, no es lo normal pero perfectamente posible.
+
+### Varible NsinMatRC
+
+```{r 2.4. Variable NsinMatRC}
+
+data %>% edaSumCont("NsinMatRC")
+data %>% edaHistCont("NsinMatRC")
+
+```
+
+Parece normal: en la mayoria de los casos, el valor de esta variable es 0, en algunos será 1 y en ocasiones extraordinarias, valores mayores que 1. Muy signiticativo el máximo de 4 siniestros.
+
+### Varible CsinMatRC
+
+```{r 2.5. Variable CsinMatRC, message=FALSE, warning=FALSE}
+
+data %>% edaSumCont("CsinMatRC")
+data %>% filter(CsinMatRC> 0) %>% edaSumCont("CsinMatRC")
+data %>% filter(CsinMatRC > 0) %>% edaDensityNum("CsinMatRC", 8000)
+
+```
+
+La curva tiene forma de gamma bien definida, por lo que parece correcta. Además observamos que el coste total no tiene negativos, por lo que, a priori, no observamos ninguna deficiencia.
+
+## Frecuencia siniestral
+
+Esta variable se define como el número de siniestros por la exposición del asegurado, de modo que:
+
+```{r 2.6. Frecuencia siniestral, message=FALSE, warning=FALSE}
+
+data %>% mutate(freqCorpRC= NsinMatRC/Exposicion) %>% edaSumCont("freqCorpRC")
+data %>% mutate(freqCorpRC= NsinMatRC/Exposicion) %>% edaHistCont("freqCorpRC")
+
+media_ponderada_freq_sin = (data$NsinMatRC %>% sum())/(data$Exposicion%>% sum())
+data %>% mutate(freqCorpRC= NsinMatRC/Exposicion) %>% edaDensityNumRef ("freqCorpRC", 5, media_ponderada_freq_sin)
+
+data_mayor0 = data %>% mutate(freqCorpRC= NsinMatRC/Exposicion) %>% filter(freqCorpRC>0)
+data_mayor0 %>% edaSumCont("freqCorpRC")
+data_mayor0 %>% edaHistCont("freqCorpRC")
+
+media_ponderada_freq_sin_mayor0 = (data_mayor0$NsinMatRC %>% sum())/(data_mayor0$Exposicion%>% sum())
+data_mayor0 %>% edaDensityNumRef ("freqCorpRC",20,media_ponderada_freq_sin_mayor0)
+
+```
+
+Se aprecia que la media hallada como la media de todas las instancias es sustancialmente diferente a la ponderada. De ahora en adelante, tomaremos solo la media ponderada como la correcta.
+
+Por otro lado, la frecuencia siniestral tiene sentido, predomina el 0 y los valores bajos. 
+
+## Coste medio - Severidad
+
+Hallada como el cociente entre el coste de los siniestro y el número de siniestros
+
+```{r 2.7. Coste medio, message=FALSE, warning=FALSE}
+
+data_mayor0_CM = data %>% mutate(sevCorpRC= CsinMatRC/NsinMatRC) %>% filter(NsinMatRC>0)
+media_ponderada_CM_mayo0 = (data_mayor0_CM$CsinMatRC %>% sum())/(data_mayor0_CM$NsinMatRC%>% sum())
+
+data_mayor0_CM %>%  edaSumCont("sevCorpRC")
+data_mayor0_CM %>% edaDensityNumRef("sevCorpRC", 8000, media_ponderada_CM_mayo0)
+
+```
+
+## Coherencia entre variables objetivo
+
+Veremos la posible incoherencia, como por ejemplo, que una póliza tengo cero reclamaciones pero tenga coste positivo.
+
+```{r 2.8. Coherencia entre variables objetivo, message=FALSE, warning=FALSE}
+
+# Crear una variable auxiliar para marcar incoherencias
+data <- data %>%
+  mutate(flagIncoherenca = case_when(
+    NsinMatRC == 0 & CsinMatRC > 0 ~ TRUE,
+    NsinMatRC > 0 & CsinMatRC == 0 ~ TRUE,
+    TRUE ~ FALSE
+  ))
+
+# Ver registros incoherentes si lo deseas
+data_inc <- data %>% filter(flagIncoherenca)
+reactViewTable(data_inc)  # opcional si usas Shiny o similar
+
+```
+
+Hay un registro que es incongruente y que procedemos a su eliminación de la base de datos
+
+```{r 2.9. Eliminación registros incongruentes}
+
+# Eliminar registros incoherentes
+data <- data %>% filter(!flagIncoherenca)
+
+#Elimino la variable flagIncongruencia
+
+data$flagIncoherenca = NULL
+
+```
+
+
+
+## EDA de las variables explicativas
+
+El análisis exploratorio se llevará a cabo sobre las siguientes variables:
+
+1. condCarne.
+2. condScore.
+3. polAntiguedad.
+4. polTipo
+5. polPago.
+6. geoComunidad.
+7. vehPotencia.
+8. vehValor.
+9. vehCombustible.
+10. vehUso.
+11. vehClase.
+12. vehPuertas.
+13. vehLong.
+
+No se llevará ningún tipo de analisis ni de preprocesado sobre las variables **poliza** ni **sample** al carecer de sentido por la propia definición de estas variables.
+
+### Varible condCarne
+
+Al ser una variable de conteo, la paso también a factor para definir sus categorías.
+
+```{r 2.10. condCarne, message=FALSE, warning=FALSE}
+
+# Ver exposición por niveles de la variable original
+vec_condCarne_levels <- data$condCarne %>% unique() %>% sort()
+data %>% mutate(condCarneFact = factor(condCarne,vec_condCarne_levels)) %>% edaBarCatExp("condCarne","Exposicion", 7, 90, 0.5, 1)
+
+```
+
+Parece tener sentido el gráfico, donde nos muestra que la categoría con mayor exposición podría estar en los 35 años de carnet, que equivaldrían a unos 53 años de edad.
+
+Quizás tenga sentido agrupar todos aquellos registros con 60 o más de 60 años de carnet, de modo que:
+
+```{r 2.11. Agrupación variable condCarne, message=FALSE, warning=FALSE}
+
+# Ver exposición por niveles de la categorización propuesta
+dataEda <- data %>%
+  mutate(condCarneFact = case_when(
+    condCarne > 59 ~ "60+",
+    T ~ as.character(condCarne)),
+    condCarneFact = factor(condCarneFact, (condCarneFact %>% unique)[condCarneFact %>% unique %>% as.numeric  %>% order]))
+
+dataEda %>% 
+  edaBarCatExp("condCarneFact","Exposicion", 7, 90, 0.5, 1)
+
+```
+
+Se observa que el **nivel base de la variable condCarne es 35 años**.
+
+### Varible condScore
+
+Variable categórica que ya esta declarada como factor, de modo que:
+
+```{r 2.12. condScore, message=FALSE, warning=FALSE}
+
+# Ver exposición por niveles de la variable original
+data %>% edaBarCatExp("condScore","Exposicion", 7, 90, 0.5, 1)
+
+```
+
+Declaro los registros con valores de 99 en la variable condScore como **Nuevos**
+
+```{r 2.13. Agrupación variable condScore, message=FALSE, warning=FALSE}
+# Ver exposición por niveles ordenados según categorización propuesta
+dataEda <- dataEda %>%
+  mutate(condScoreFact = case_when(
+    condScore == 99 ~ "Nuevos", 
+    T ~ as.character(condScore)),
+        condScoreFact = factor(condScoreFact, (condScoreFact %>% unique)[condScoreFact %>% unique %>% str_remove_all("[[+-]]") %>% as.numeric  %>% order]))
+dataEda %>% 
+  edaBarCatExp("condScoreFact","Exposicion", 12, 0, 0.5, 0.5)
+
+```
+
+Se observa que el **nivel base de la variable condScore es 1**.
+
+### Varible polAntiguedad
+
+Al ser una variable de conteo, la paso también a factor para definir sus categorías.
+
+```{r 2.14. polAntiguedad, message=FALSE, warning=FALSE}
+
+# Ver exposición por niveles de la variable original
+vec_polAntiguedad_levels <- data$polAntiguedad %>% unique() %>% sort()
+data %>% mutate(polAntiguedadFact = factor(polAntiguedad,vec_polAntiguedad_levels)) %>% edaBarCatExp("polAntiguedadFact","Exposicion", 12, 0, 0.5, 0.5)
+
+```
+
+Parece tener sentido el gráfico, donde nos muestra que la categoría con mayor exposición podría estar entre los 2 y 4 años de antigüedad de la póliza.
+
+Quizás tenga sentido agrupar todos aquellos registros con más de 5 años de póliza, de modo que:
+
+```{r 2.15. Agrupación variable polAntiguedad, message=FALSE, warning=FALSE}
+
+# Ver exposición por niveles ordenados de la categorización propuesta
+dataEda <- dataEda %>%
+  mutate(polAntiguedadFact = case_when(
+    polAntiguedad >= 5 ~ "5+", 
+    T ~ as.character(polAntiguedad)),
+        polAntiguedadFact = factor(polAntiguedadFact, (polAntiguedadFact %>% unique)[polAntiguedadFact %>% unique %>% str_remove_all("[[+-]]") %>% as.numeric  %>% order]))
+
+dataEda %>% 
+  edaBarCatExp("polAntiguedadFact","Exposicion", 12, 0, 0.5, 0.5)
+
+```
+
+Se observa que el **nivel base de la variable polAntiguedad es 2 años**.
+
+### Varible polTipo
+
+Variable categórica que ya esta declarada como factor, de modo que:
+
+```{r 2.16. polTipo, message=FALSE, warning=FALSE}
+
+# Ver exposición por niveles de la variable original
+data %>% edaBarCatExp("polTipo","Exposicion", 7, 90, 0.5, 1)
+
+# No se aprecia que haya que recategorizar esta variable.
+
+# Ver exposición por niveles ordenados de la categorización propuesta
+dataEda <- dataEda %>%
+  mutate(polTipoFact = polTipo,
+        polTipoFact = factor(polTipoFact, c("Semestral", "Anual")))
+
+dataEda %>% 
+  edaBarCatExp("polTipoFact","Exposicion", 12, 0, 0.5, 0.5)
+
+```
+
+Se observa que el **nivel base de la variable polTipo es Anual**.
+
+### Varible polPago
+
+Variable categórica que ya esta declarada como factor, de modo que:
+
+```{r 2.17. polPago, message=FALSE, warning=FALSE}
+
+# Ver exposición por niveles de la variable original
+data %>% edaBarCatExp("polPago","Exposicion", 7, 90, 0.5, 1)
+
+# No se aprecia que haya que recategorizar esta variable.
+
+dataEda <- dataEda %>%
+  mutate(polPagoFact = polPago,
+        polTipoFact = factor(polTipoFact))
+
+dataEda %>% 
+  edaBarCatExp("polPagoFact","Exposicion", 12, 0, 0.5, 0.5)
+
+```
+
+Se observa que el **nivel base de la variable polPago es Domiciliado**.
+
+### Varible geoComunidad
+
+Variable categórica que ya esta declarada como factor, de modo que:
+
+```{r 2.18. geoComunidad, message=FALSE, warning=FALSE}
+# Ver exposición por niveles de la variable original
+data %>% edaBarCatExp("geoComunidad","Exposicion", 7, 90, 0.5, 1)
+
+```
+
+Parece que la mása estadísitica se ecuentra principalmente en la Comunidad de Madrid. También hay algo en Andalucía, Castilla-La Mancha y en Cataluña. En el resto hay poca masa. Por tanto, voy a dejar las Comunidades de Madrid, Andalucía, Castilla-La Mancha y Cataluña y las otras las voy a agrupar en "OTRAS CCAA"
+
+```{r 2.19. Agrupación variable geoComunidad, message=FALSE, warning=FALSE}
+
+dataEda <- dataEda %>%
+  mutate(geoComunidadFact = case_when(
+    geoComunidad %in% c("Comunidad de Madrid","Cataluña","Andalucía","Castilla-La Mancha") ~ as.character(geoComunidad), 
+    T ~ "OTRAS CCAA"),
+        geoComunidadFact = factor(geoComunidadFact, c("Comunidad de Madrid","Cataluña","Andalucía","Castilla-La Mancha","OTRAS CCAA")))
+
+dataEda %>% 
+  edaBarCatExp("geoComunidadFact","Exposicion", 12, 45, 1, 1)
+
+```
+
+Se observa que el **nivel base de la variable geoComunidad es Comunidad de Madrid**.
+
+### Varible vehPotencia
+
+Al ser una variable de conteo, la paso también a factor para definir sus categorías.
+
+```{r 2.20. vehPotencia, message=FALSE, warning=FALSE}
+
+# Ver exposición por niveles de la variable original
+vec_vehPotencia_levels <- data$vehPotencia %>% unique() %>% sort()
+data %>% mutate(vehPotenciaFact = factor(vehPotencia,vec_vehPotencia_levels)) %>% edaBarCatExp("vehPotencia","Exposicion", 7, 90, 0.5, 1)
+
+```
+Parece tener sentido el gráfico, donde nos muestra que la categoría con mayor exposición podría estar entorno a los 100 CV.
+
+Vamos a intentar acotar un poco el gráfico para verlo mejor, de modo que voy a agrupar todos los valores menores de 20 CV y todos los valores de potencia por encima de 200 CV. Los valores que quedan en medio de esta acotación los voy a agrupar en grupos de 20 en 20 CV, de modo que:
+
+```{r 2.21. Agrupación variable vehPotencia, message=FALSE, warning=FALSE}
+
+# Ver exposición por niveles de la categorización propuesta
+
+dataEda <- dataEda %>%
+  mutate(
+    # Paso 1: Clasificamos los extremos
+    vehPotenciaFact = case_when(
+      vehPotencia > 199 ~ "200+",
+      vehPotencia <= 20 ~ "0-20",
+      TRUE ~ NA_character_
+    ),
+
+    # Paso 2: Generar etiquetas dinámicas para los valores intermedios
+    vehPotenciaFact = if_else(
+      is.na(vehPotenciaFact),
+      paste0(
+        ((vehPotencia - 1) %/% 20) * 20 + 1, "-",
+        (((vehPotencia - 1) %/% 20) + 1) * 20
+      ),
+      vehPotenciaFact
+    ),
+
+    # Paso 3: Ordenar niveles del factor con "200+" al final
+    vehPotenciaFact = factor(
+      vehPotenciaFact,
+      levels = {
+        etiquetas <- unique(vehPotenciaFact)
+        
+        # Extraemos las etiquetas sin "200+" ni "0-20"
+        intermedios <- etiquetas[!etiquetas %in% c("0-20", "200+")]
+        
+        # Ordenamos los intermedios por el número inicial del rango
+        orden_intermedios <- intermedios[order(as.numeric(gsub("[^0-9]", "", intermedios)))]
+
+        # Concatenamos "0-20", los intermedios ordenados, y "200+"
+        c("0-20", orden_intermedios, "200+")
+      }
+    )
+  )
+
+
+dataEda %>%
+  edaBarCatExp("vehPotenciaFact", "Exposicion", 7, 0, 0.5, 1)
+
+```
+
+Se observa que el **nivel base de la variable vehPotencia es 81-100**.
+
+### Varible vehValor
+
+Se trata de una variable numérica, por lo que sacaré en primer lugar su gráfica de densidad
+
+```{r 2.22. vehValor, message=FALSE, warning=FALSE}
+# Ver exposición por niveles de la variable original
+data  %>% edaDensityNum("vehValor",70000)
+```
+
+Compruebo si hay algún valor negativo:
+
+```{r 2.23. vehValor - Valores Negativos, message=FALSE, warning=FALSE}
+
+data$vehValor[data$vehValor<0]
+
+```
+
+Observo que tres valores son negativos, por lo que, no tiene sentido. Estudio cual es la potencia de estos valores negoativos:
+
+```{r 2.24. vehValor - Valores Negativos - Bis, message=FALSE, warning=FALSE}
+
+data_vehvalor_neg = dataEda %>% filter (vehValor<0)
+data_vehvalor_neg$vehPotenciaFact
+
+```
+
+Los dos primeros valores se encuadran dentro del grupo 101-120 y 
+
+```{r 2.25. vehValor - Imputación valores negativos, message=FALSE, warning=FALSE}
+
+# Paso 1: Calcular la media de vehValor para cada grupo de vehPotenciaFact, excluyendo los valores negativos
+mean_values <- dataEda %>%
+  filter(vehValor >= 0) %>%
+  group_by(vehPotenciaFact) %>%
+  summarise(mean_vehValor = mean(vehValor, na.rm = TRUE))
+
+# Paso 2: Unir las medias al dataframe original
+dataEda <- dataEda %>%
+  left_join(mean_values, by = "vehPotenciaFact")
+
+# Paso 3: Imputar los valores negativos
+dataEda <- dataEda %>%
+  mutate(vehValor = ifelse(vehValor < 0, mean_vehValor, vehValor)) %>%
+  select(-mean_vehValor)  # eliminar la columna auxiliar si ya no la necesitas
+
+#Los imputo también en el dataframe data:
+
+data$vehValor[data$vehValor<0] = dataEda$vehValor [data$vehValor<0]
+
+# Se comprueba que no existen más valores negativos en la variable vehValor en ambos dataframes:
+
+dataEda$vehValor[dataEda$vehValor<0]
+data$vehValor[data$vehValor<0]
+
+```
+
+Finalmente, una vez imputados los valores negativos, se agrupan los valores de la variable vehValor. De modo que, voy a hacer grupos de 5.000 euros para los rangos intermendios. El último rango será para valores mayores de 55000 € y el primero de 0 a 15000 euros:
+
+```{r 2.26. Agrupación variable vehPotencia, message=FALSE, warning=FALSE}
+
+dataEda <- dataEda %>%
+  mutate(
+    vehValorFact = case_when(
+      vehValor <= 15000 ~ "0-15000",
+      vehValor > 15000 & vehValor <= 20000 ~ "15001-20000",
+      vehValor > 20000 & vehValor <= 25000 ~ "20001-25000",
+      vehValor > 25000 & vehValor <= 30000 ~ "25001-30000",
+      vehValor > 30000 & vehValor <= 35000 ~ "30001-35000",
+      vehValor > 35000 & vehValor <= 40000 ~ "35001-40000",
+      vehValor > 40000 & vehValor <= 45000 ~ "40001-45000",
+      vehValor > 45000 & vehValor <= 50000 ~ "45001-50000",
+      vehValor > 50000 & vehValor <= 55000 ~ "50001-55000",
+      vehValor > 55000 ~ "55000+"
+    ),
+    vehValorFact = factor(
+      vehValorFact,
+      levels = c(
+        "0-15000", "15001-20000", "20001-25000", "25001-30000",
+        "30001-35000", "35001-40000", "40001-45000", "45001-50000",
+        "50001-55000", "55000+"
+      )
+    )
+  )
+
+# Visualización
+dataEda %>%
+  edaBarCatExp("vehValorFact", "Exposicion", 12, 45, 1, 1)
+
+```
+
+Se observa que el **nivel base de la variable vehPotencia es 20001-25000**.
+
+### Varible vehCombustible
+
+Variable categórica que ya esta declarada como factor, de modo que:
+
+```{r 2.27. vehCombustible, message=FALSE, warning=FALSE}
+
+# Ver exposición por niveles de la variable original
+data %>% edaBarCatExp("vehCombustible","Exposicion", 10, 0, 0.5, 1)
+
+dataEda <- dataEda %>%
+  mutate(vehCombustibleFact = vehCombustible,
+        vehCombustibleFact = factor(vehCombustibleFact))
+
+```
+
+No observo la necesidad de hacer ninguna agrupación.
+
+Se observa que el **nivel base de la variable vehCombustible es Diesel**.
+
+### Varible vehUso
+
+Variable categórica que ya esta declarada como factor, de modo que:
+
+```{r 2.28. vehUso, message=FALSE, warning=FALSE}
+
+# Ver exposición por niveles de la variable original
+data %>% edaBarCatExp("vehUso","Exposicion", 10, 0, 0.5, 1)
+
+dataEda <- dataEda %>%
+  mutate(vehUsoFact = vehUso,
+        vehUsoFact = factor(vehUsoFact))
+
+```
+
+No observo la necesidad de hacer ninguna agrupación.
+
+Se observa que el **nivel base de la variable vehUso es Particular**.
+
+### Varible vehClase
+
+Variable categórica que ya esta declarada como factor, de modo que:
+
+```{r 2.29. vehClase, message=FALSE, warning=FALSE}
+
+# Ver exposición por niveles de la variable original
+data %>% edaBarCatExp("vehClase","Exposicion", 10, 0, 0.5, 1)
+
+```
+
+Dada la poca masa estadística del grupo "COUPE", se agrupa este junto con el grupo "OTRO", de modo que:
+
+```{r 2.30. Agrupación variable vehClase, message=FALSE, warning=FALSE}
+
+dataEda <- dataEda %>%
+  mutate(vehClaseFact = case_when(
+    vehClase %in% c("BERLINA","FAMILIAR") ~ as.character(vehClase), 
+    T ~ "OTRO"),
+        vehClaseFact = factor(vehClaseFact, c("BERLINA","FAMILIAR","OTRO")))
+
+dataEda %>% 
+  edaBarCatExp("vehClaseFact","Exposicion", 12, 45, 1, 1)
+
+```
+
+Se observa que el **nivel base de la variable vehClase es BERLINA**.
+
+### Varible vehPuertas
+
+Al ser una variable de conteo, la paso también a factor para definir sus categorías.
+
+```{r 2.31. vehPuertas, message=FALSE, warning=FALSE}
+
+# Ver exposición por niveles de la variable original
+vec_vehPuertas_levels <- data$vehPuertas %>% unique() %>% sort()
+data %>% mutate(vehPuertasFact = factor(vehPuertas,vec_vehPuertas_levels)) %>% edaBarCatExp("vehPuertas","Exposicion", 7, 90, 0.5, 1)
+
+```
+
+En primer lugar me llama la atención los vehículos que no tienen puertas, seguramente se traten de motos, por tanto, catalogaré a este grupo como "MOTOS".
+
+Por otro lado agruparé los valores de vehPuertas en un grupo que aglutine los valores de 2 a 4 puertas (ambos inclusives).
+
+Dejaré el grupo de 5 puertas intacto al ser el más significativo.
+
+Finalmente, también deejaré sin agrupar los vehículos de 6 puertas, al ser "especiales".
+
+```{r 2.32. vehPuertas - Sin puertas, message=FALSE, warning=FALSE}
+
+# Transformación del dataframe con dplyr
+dataEda <- dataEda %>%
+  mutate(
+    # Crear variable categórica 'vehPuertasFact' a partir del número de puertas
+    vehPuertasFact = case_when(
+      vehPuertas < 1 ~ "MOTOS",                # Si tiene menos de 1 puerta, se considera moto
+      vehPuertas >= 2 & vehPuertas <= 4 ~ "ENTRE 2 y 4",  # Si tiene entre 2 y 4 puertas, se agrupa así
+      vehPuertas == 5 ~ "5",                   # Si tiene 5 puertas, se clasifica como "5"
+      vehPuertas == 6 ~ "6"                    # Si tiene 6 puertas, se clasifica como "6"
+    ),
+    
+    # Convertir la nueva variable en factor con niveles ordenados
+    vehPuertasFact = factor(
+      vehPuertasFact,
+      levels = c("MOTOS", "ENTRE 2 y 4", "5", "6")  # Orden deseado para visualizar
+    )
+  )
+
+# Visualización de la exposición según número de puertas
+# edaBarCatExp(variable categórica, variable de exposición, tamaño texto eje x, tamaño texto eje y, número de columnas, número de filas)
+dataEda %>%
+  edaBarCatExp("vehPuertasFact", "Exposicion", 12, 45, 1, 1)
+
+```
+
+Se observa que el **nivel base de la variable vehPuertas es 5**.
+
+### Variable vehLong
+
+Al ser una variable de conteo, la paso también a factor para definir sus categorías.
+
+```{r 2.33. vehLong, message=FALSE, warning=FALSE}
+
+# Ver exposición por niveles de la variable original
+vec_vehLong_levels <- data$vehLong %>% unique() %>% sort()
+data %>% mutate(vehLongFact = factor(vehLong,vec_vehLong_levels)) %>% edaBarCatExp("vehLong","Exposicion", 7, 90, 0.5, 1)
+
+data_vehLong_neg = dataEda %>% filter (vehLong<0)
+data_vehLong_neg
+
+# Se comprueba que no hay ningún registro con longitudes de vehículo negativas.
+
+```
+
+```{r 2.34. Agrupación vehLong, message=FALSE, warning=FALSE}
+
+dataEda <- dataEda %>%
+  mutate(
+    # Agrupar la longitud del vehículo en tramos de 250 desde 3501 hasta 5250
+    vehLongFact = case_when(
+      vehLong <= 3500 ~ "0-3500",
+      vehLong > 3500 & vehLong <= 3750 ~ "3501-3750",
+      vehLong > 3750 & vehLong <= 4000 ~ "3751-4000",
+      vehLong > 4000 & vehLong <= 4250 ~ "4001-4250",
+      vehLong > 4250 & vehLong <= 4500 ~ "4251-4500",
+      vehLong > 4500 & vehLong <= 4750 ~ "4501-4750",
+      vehLong > 4750 & vehLong <= 5000 ~ "4751-5000",
+      vehLong > 5000 & vehLong <= 5250 ~ "5001-5250",
+      vehLong > 5250 ~ "5250+"
+    ),
+    
+    # Convertir a factor con niveles ordenados
+    vehLongFact = factor(
+      vehLongFact,
+      levels = c(
+        "0-3500", "3501-3750", "3751-4000", "4001-4250", "4251-4500",
+        "4501-4750", "4751-5000", "5001-5250", "5250+"
+      )
+    )
+  )
+
+# Visualización
+dataEda %>%
+  edaBarCatExp("vehLongFact", "Exposicion", 12, 45, 1, 1)
+
+```
+
+Se observa que el **nivel base de la variable vehLong es el rango entre 4251 y 4500**.
+
+Una vez, evaluadas todas las variables explicativas, se añade otra que me relaciones el riesgo que tiene el asegurado en base a su calificación crediticia con el valor del vehículo. De modo que se crea la sigueinte variable categórica:
+
+# EJERCICIO 2: PREPROCESADO - CREACIÓN UNA VARIABLE ADICIONAL
+
+## Variable Nivel de Riesgo
+
+```{r 3.1. Variable Nivel de Riesgo, message=FALSE, warning=FALSE}
+
+dataEda$condScore = as.numeric(dataEda$condScore)
+
+dataEda <- dataEda %>%
+  mutate(
+    # Clasificamos condScore en niveles de riesgo (incluye manejo de NA)
+    scoreNivel = case_when(
+      is.na(condScore) ~ "Desconocido",
+      condScore <= 2 ~ "Riesgo bajo",
+      condScore >= 3 & condScore <= 5 ~ "Riesgo medio",
+      condScore >= 6 | condScore == 99 ~ "Riesgo alto"
+    ),
+    
+    # Clasificamos vehValor en tramos (incluye manejo de NA)
+    valorNivel = case_when(
+      is.na(vehValor) ~ "Desconocido",
+      vehValor <= 20000 ~ "Valor bajo",
+      vehValor > 20000 & vehValor <= 25000 ~ "Valor medio",
+      vehValor > 25000 ~ "Valor alto"
+    ),
+    
+    # Combinamos ambas variables en una variable categórica
+    Nivel_Riesgo = paste(scoreNivel, valorNivel, sep = " - ")
+    ,
+    
+    # Convertimos a factor ordenado para análisis y visualización
+    Nivel_RiesgoFact = factor(
+      Nivel_Riesgo,
+      levels = c(
+        "Riesgo bajo - Valor bajo", "Riesgo bajo - Valor medio", "Riesgo bajo - Valor alto",
+        "Riesgo medio - Valor bajo", "Riesgo medio - Valor medio", "Riesgo medio - Valor alto",
+        "Riesgo alto - Valor bajo", "Riesgo alto - Valor medio", "Riesgo alto - Valor alto"
+      )
+    )
+  )
+
+# Visualización de la exposición según el segmento de riesgo-valor
+dataEda %>%
+  edaBarCatExp("Nivel_Riesgo", "Exposicion", 9, 45, 1, 1)
+
+
+```
+
+Se observa que el **nivel base de la variable Nivel de Riesgo es Riesgo bajo - Valor bajo**.
+
+## Niveles base
+
+Por tanto, expongo todos los niveles base de todas las variables explicativas:
+
+```{r 3.2. Niveles base, message=FALSE, warning=FALSE}
+
+# Crear tabla de atributos, definiciones y nivel base
+tabla_nivel_base <- data.frame(
+  Variable_Explicativa = c(
+    "condCarne", "condScore", "polAntiguedad", "polTipo", "polPago",
+    "geoComunidad", "vehPotencia", "vehValor", "vehCombustible",
+    "vehUso", "vehClase", "vehPuertas", "vehLong", "Nivel_Riesgo"
+  ),
+  Nivel_base = c(
+    "35", "1", "2", "Anual", "Domiciliado", "Comunidad de Madrid", 
+    "81-100", "20001-25000", "Diesel", "Particular", 
+    "BERLINA", "5", "4251-4500", "Riesgo bajo - Valor bajo"
+  ),
+  stringsAsFactors = FALSE
+)
+
+# Visualizar tabla
+
+kable(tabla_nivel_base,
+      caption = "Niveles base variables explicativas",
+      format = "html",
+      table.attr = "class='tabla-con-titulo-grande'") %>%
+  kable_styling(full_width = FALSE, position = "center", bootstrap_options = c("striped"))
+
+```
+
+## Prepocesado
+
+```{r 3.3. Preprocesado, message=FALSE, warning=FALSE}
+
+# Nos quedamos con las muestra de entrenamiento
+dataModel <- preprocess(data %>% filter(samples == "Modelling") %>% select(-samples))
+dataModel <- dataModel %>% select(-scoreNivel,-valorNivel)
+dataModel %>% head(1000) %>% reactViewTableTarget(c( "Exposicion","NsinMatRC", "CsinMatRC", "NsinCorpRC","CsinCorpRC"))
+
+```
+
+# EJERCICIO 3: MODELIZACIÓN - TENDENCIA E IMPORTANCIA DE LAS VARIABLES
+
+## Chequeos iniciales 
+
+### Distribucion
+
+Comenzamos por la frecuencia sinestral:
+
+```{r 4.1. DistribucionFreq, message=FALSE, warning=FALSE}
+
+dataModel %>% mutate(freqCorpRC= NsinMatRC/Exposicion) %>% edaHistCont("freqCorpRC")
+
+```
+
+Tiene sentido, ya que practicamente, la masa estadística se centra en el 0.
+
+### Correlaciones
+
+Vemos las relaciones entre variables para evitar problemas de colinealidad al ejecutar el modelo lineal. Al ser todo variables categóricas, en realidad, es la V de Cramer lo que analizamos.
+
+```{r 4.2. Correlaciones variables categóricas, message=FALSE, warning=FALSE}
+
+factorsList = get_names(dataModel,types = c('factor'))
+
+# Crear una matriz vacía para almacenar los resultados
+VCramerFreqMatrix <- matrix(NA, nrow = length(factorsList), ncol = length(factorsList), dimnames = list(factorsList, factorsList))
+
+# Usar sapply para calcular la V de Cramer para cada combinación de variables
+VCramerFreqMatrix[] <- sapply(factorsList, function(var1) {
+ sapply(factorsList, function(var2) {
+   if (var1 != var2) {
+    calc_cramerV(dataModel, var1, var2)
+  } else {
+  1
+  }
+  })
+})
+
+VCramerFreqMatrix %>% reactViewTable
+
+# Generar el gráfico de correlaciones con colores personalizados
+corrplot(VCramerFreqMatrix, method = "color", 
+         col = brewer.pal(n = 8, name = "RdBu"), 
+         type = "lower", 
+         order = "hclust", 
+         addCoef.col = "black", 
+         tl.col = "black", 
+         tl.srt = 45, 
+         tl.cex = 0.55, # Ajustar el tamaño del texto en las etiquetas
+         number.cex = 0.7, # Ajustar el tamaño del texto de los valores de correlación
+         diag = FALSE)
+
+```
+
+Se observa una gran correlación entre las **variables de vehículo**. Destacar sobre todo, la correlación entre el **valor del vehículo** y su **longitud** y **potencia*,
+
+Además, se observa que, como no puede ser de otra manera, la variable creada, tiene fuerte correlación con CondScore y con vehValor, esto hace que también esté correlacionado con VehPotencia.
+
+En cuanto al resto de variables no relacionadas con la naturaleza del vehículo, no hay una fuerte correlación salvo en **polTipo** y **polPago**
+
+## Análisis por variables
+
+Empleamos las funciones anteriores para analizar diferentes versiones de los modelos.
+
+### Tendencias de las variables - Full Model
+
+Primero probamos un modelo completo, esto es, un modelo con todas las variables de mi base de datos, para ver las tendencias de todas las variables.
+
+```{r 4.3. Primer modelo con todas las variables , message=FALSE, warning=FALSE}
+
+# Full Model
+# Se usa una regresión de Poisson, para modelos de conteo (como número de siniestros).
+
+glmFreqFullModel <- glm(NsinMatRC ~ condCarne  + condScore + polAntiguedad + polTipo  + polPago + geoComunidad + vehPotencia + vehValor + vehCombustible + vehUso + vehClase  + vehPuertas + vehLong + Nivel_Riesgo,offset=log(Exposicion), data=dataModel, family=poisson()) #offset=log(Exposicion) no se estima (es una constante para cada observación).
+
+fullFactors <- c("condCarne", "condScore", "polAntiguedad", "polTipo", "polPago", "geoComunidad", "vehPotencia", "vehValor", "vehCombustible", "vehUso", "vehClase", "vehPuertas", "vehLong", "Nivel_Riesgo") # Cojo todas las variables factor de la base de datos
+
+listOrderFactLevels <- dataEda %>% select(contains("Fact")) %>% sapply(levels)
+listOrderFactLevels <- dataEda %>% select(contains("Fact")) %>% sapply(levels)
+names(listOrderFactLevels) <- names(listOrderFactLevels) %>% str_remove_all("Fact")
+
+FullDataMetricsFreqFullModel  <- ModelAnalysisFinal(glmFreqFullModel, glmFreqFullModel, dataModel, "NsinMatRC", "Exposicion", fullFactors, listOrderFactLevels, CompareModels=F)
+
+FullDataMetricsFreqFullModel  %>% reactViewTable
+
+lapply(1:length(fullFactors), function(i){modelAnalysisPlotsFinal(FullDataMetricsFreqFullModel, "RescaledPredictedValues","RescaledPredictedValues", fullFactors[i], "blue", "#FFA552", 8, 90, 0.5, 1)}) #El rescalado pone en 1 el nivel base.
+
+```
+
+Conclusiones de las tendencias de las variables:
+
+* **condCarne:** En los niveles centrales, donde la masa estadística es mayor, parece que la tendencia es decreciente en cuanto a la frecuencia sinestral.
+* **condScore:** En los niveles primeros, donde hay una masa estadísitca importante, parece que la tendencia es creciiente. Luego, la gráfica no parece aportar información de calidad.
+* **polAntiguedad:** La gráfica tiene forma de diente de sierra, por lo que no parece que haya una tendencia clara.
+* **polTipo:** Parece que existe una mayor frecuencia sinestral con las pólizas pagadas de manera semestral. Quizás por la situación económica, las personas que pagan de manera semestral son algo mas irresponsables o asumen menos riesgos que las que pagan anualmente.
+* **polPago:** Parece que existe una mayor frecuencia sinestral con las pólizas pagadas en efectivo. Por darle una explicación, quizás el hecho de pagar en efectivo hace que este asegurado no quiera aportar datos personales, ni dejar huellas de ningún tipo.
+* **geoComunidad:** El hecho de que la mayor parte de la masa estadísitca se centre en la Comunidad de Madrid, hace que el gráfico no aporte información de calidad sobre la tendencia.
+* **vehPotencia:** Parece que en los niveles intermedios, donde hay gran masa estadística, la tendencia es ligeramente decreciente. Quizás los asegurados con coches menos potentes son más irresponsables a la hora de conducir. Luego, en el nivel base vuelve a subir. Tras ello, la gráfica presenta forma de diente de sierra que no aporta información concluyente.
+* **vehValor:** Parece que en los primeros niveles , donde hay gran masa estadística, la tendencia es decreciente. Se ve que los asegurados que se pueden permitir coches más caros, suelen reportar menos incidencias.
+* **vehCombustible:** Los asegurados con vehículos de gasolina suelen reportar menos incidencias que los de vehículos diesel.
+* **vehUso:** Los asegurados con vehículos de uso comercial suelen reportar más incidencias que los de uso particular. Tiene sentido, seguramente el tiempo de uso sea mayor.
+* **vehClase:** Este gráfico no tiene mucho sentido. No aporta información valiosa.
+* **vehPuertas:** El hecho de que la mayor parte de la masa estadísitca se centre en 5 puertas, hace que el gráfico no aporte información de calidad sobre la tendencia.
+* **vehLong:** Se aprecia una tendencia ligeramente decreciente, en los niveles intermedios de la variable, donde se centra la masa estadística.
+* **Nivel_Riesgo:** No se observa una tendencia clara. De hecho, se observa un problema claro de correlación.
+
+### Importancia de las variables - Calculos deltas de AIC y devianza
+
+Antes de proceder con la definición final del modelo, paso en primer lugar a calcular las deltas de AIC y devianza de los modelos con y sin cada una de las varibales, de modo que, pueda tener argumentos más sólidos para desprenderme de ciertas variables:
+
+```{r 4.4. Importancia de las variables, message=FALSE, warning=FALSE}
+
+glmFreqInitialModelcondCarne <- glm(NsinMatRC ~ condScore + polAntiguedad + polTipo  + polPago + geoComunidad + vehPotencia + vehValor + vehCombustible + vehUso + vehClase  + vehPuertas + vehLong + Nivel_Riesgo,offset=log(Exposicion), data=dataModel, family=poisson())
+
+glmFreqInitialModelcondScore <- glm(NsinMatRC ~ condCarne + polAntiguedad + polTipo  + polPago + geoComunidad + vehPotencia + vehValor + vehCombustible + vehUso + vehClase  + vehPuertas + vehLong + Nivel_Riesgo,offset=log(Exposicion), data=dataModel, family=poisson())
+
+glmFreqInitialModelpolAntiguedad <- glm(NsinMatRC ~ condCarne  + condScore + polTipo  + polPago + geoComunidad + vehPotencia + vehValor + vehCombustible + vehUso + vehClase  + vehPuertas + vehLong + Nivel_Riesgo,offset=log(Exposicion), data=dataModel, family=poisson())
+
+glmFreqInitialModelpolTipo <- glm(NsinMatRC ~ condCarne  + condScore + polAntiguedad + polPago + geoComunidad + vehPotencia + vehValor + vehCombustible + vehUso + vehClase  + vehPuertas + vehLong + Nivel_Riesgo,offset=log(Exposicion), data=dataModel, family=poisson())
+
+glmFreqInitialModelpolPago<- glm(NsinMatRC ~ condCarne  + condScore + polAntiguedad + polTipo + geoComunidad + vehPotencia + vehValor + vehCombustible + vehUso + vehClase  + vehPuertas + vehLong + Nivel_Riesgo,offset=log(Exposicion), data=dataModel, family=poisson())
+
+glmFreqInitialModelgeoComunidad <- glm(NsinMatRC ~ condCarne  + condScore + polAntiguedad + polTipo  + polPago + vehPotencia + vehValor + vehCombustible + vehUso + vehClase  + vehPuertas + vehLong + Nivel_Riesgo,offset=log(Exposicion), data=dataModel, family=poisson())
+
+glmFreqInitialModelvehPotencia <- glm(NsinMatRC ~ condCarne  + condScore + polAntiguedad + polTipo  + polPago + geoComunidad + vehValor + vehCombustible + vehUso + vehClase  + vehPuertas + vehLong + Nivel_Riesgo,offset=log(Exposicion), data=dataModel, family=poisson())
+
+glmFreqInitialModelvehValor <- glm(NsinMatRC ~ condCarne  + condScore + polAntiguedad + polTipo  + polPago + geoComunidad + vehPotencia + vehCombustible + vehUso + vehClase  + vehPuertas + vehLong + Nivel_Riesgo,offset=log(Exposicion), data=dataModel, family=poisson())
+
+glmFreqInitialModelvehCombustible <- glm(NsinMatRC ~ condCarne  + condScore + polAntiguedad + polTipo  + polPago + geoComunidad + vehPotencia + vehValor + vehUso + vehClase  + vehPuertas + vehLong + Nivel_Riesgo,offset=log(Exposicion), data=dataModel, family=poisson())
+
+glmFreqInitialModelvehUso<- glm(NsinMatRC ~ condCarne  + condScore + polAntiguedad + polTipo  + polPago + geoComunidad + vehPotencia + vehValor + vehCombustible + vehClase  + vehPuertas + vehLong + Nivel_Riesgo,offset=log(Exposicion), data=dataModel, family=poisson())
+
+glmFreqInitialModelvehClase <- glm(NsinMatRC ~ condCarne  + condScore + polAntiguedad + polTipo  + polPago + geoComunidad + vehPotencia + vehValor + vehCombustible + vehUso + vehPuertas + vehLong + Nivel_Riesgo,offset=log(Exposicion), data=dataModel, family=poisson())
+
+glmFreqInitialModelvehPuertas<- glm(NsinMatRC ~ condCarne  + condScore + polAntiguedad + polTipo  + polPago + geoComunidad + vehPotencia + vehValor + vehCombustible + vehUso + vehClase + vehLong + Nivel_Riesgo,offset=log(Exposicion), data=dataModel, family=poisson())
+
+glmFreqInitialModelvehLong <- glm(NsinMatRC ~ condCarne  + condScore + polAntiguedad + polTipo  + polPago + geoComunidad + vehPotencia + vehValor + vehCombustible + vehUso + vehClase  + vehPuertas + Nivel_Riesgo,offset=log(Exposicion), data=dataModel, family=poisson())
+
+glmFreqInitialModelNivel_Riesgo <- glm(NsinMatRC ~ condCarne  + condScore + polAntiguedad + polTipo  + polPago + geoComunidad + vehPotencia + vehValor + vehCombustible + vehUso + vehClase  + vehPuertas + vehLong ,offset=log(Exposicion), data=dataModel, family=poisson())
+
+listModelsIncluded <- list(glmFreqInitialModelcondCarne, glmFreqInitialModelcondScore, glmFreqInitialModelpolAntiguedad, glmFreqInitialModelpolTipo, glmFreqInitialModelpolPago, glmFreqInitialModelgeoComunidad, glmFreqInitialModelvehPotencia, glmFreqInitialModelvehValor, glmFreqInitialModelvehCombustible, glmFreqInitialModelvehUso, glmFreqInitialModelvehClase, glmFreqInitialModelvehPuertas, glmFreqInitialModelvehLong, glmFreqInitialModelNivel_Riesgo)
+
+names(listModelsIncluded) <- fullFactors
+
+
+resultStatisticalSigVarInclud <- lapply(fullFactors, function(x){comparar_modelos_glm( listModelsIncluded[[x]], glmFreqFullModel)}) %>% bind_rows() %>% mutate(Variable = fullFactors ) %>% relocate(Variable, .before = AICc_modelo_con)
+
+resultStatisticalSigVarInclud %>% reactViewTable()
+
+```
+
+### Modelo inicial - Eliminación de variables
+
+Una vez analizadas las tendencias, las correlaciones y la importancia de las variables, procedo a definir mi modelo inicial con las variables que más me interesan y además, intentaré definir cuales me conviene mejor agrupar sus niveles.
+
+* **condCarne:** La devianza me indica que lo mejor es que esta variable permanezca. Eso sí, tendré que agrupar niveles, puesto que el AIC empeora. Síntoma de que la variable cuenta con muchos niveles. Además la variable tiene una tendencia bien definida.
+* **condScore:** Tanto la devianza como el AICE mejoran si permanece la variable. Además, la tendencia no es mala. Quizás tenga sentido agrupar a partir del nivel 4.
+* **polAntiguedad:** Tanto la devianza como el AICE mejoran si permanece la variable. Quizás, tenga sentido hacer alguna agrupación, puesto que la tendencia no es clara.
+* **polTipo:** Aunque no en gran medida, tanto la devianza como el AICE mejoran si permanece la variable.
+* **polPago:** La AIC no mejora, además presenta una alta correlación con la variable polTipo. **SE ELIMINA DEL MODELO INICIAL**
+* **geoComunidad:** Tanto la devianza como el AICE mejoran si permanece la variable.
+* **vehPotencia:** La devianza me indica que lo mejor es que esta variable permanezca. Eso sí, tendré que agrupar niveles, puesto que el AIC empeora. Síntoma de que la variable cuenta con muchos niveles. Además la variable tiene una tendencia bien definida en valores anteriores a 140.
+* **vehValor:** La devianza me indica que lo mejor es que esta variable permanezca. Eso sí, tendré que agrupar niveles, puesto que el AIC empeora. Síntoma de que la variable cuenta con muchos niveles. Además la variable tiene una tendencia bien definida en valores anteriores a 50000.
+* **vehCombustible:** Tanto la devianza como el AICE mejoran si permanece la variable.
+* **vehUso:** Los valores de AIC no son buenos, sin embargo, la devianza mejor cuando la variable permanece en el modelo
+* **vehClase:** Los valores de AIC no son buenos. Además, presenta una alta correlación con las variables vehUso, vehLong y vehValor. **SE ELIMINA DEL MODELO INICIAL**
+* **vehPuertas:** La devianza me indica que lo mejor es que esta variable permanezca. Eso sí, tendré que agrupar niveles, puesto que el AIC empeora. Síntoma de que la variable cuenta con muchos niveles. Agruparé las motos con los niveles de 2 a 4.
+* **vehLong:** La devianza me indica que lo mejor es que esta variable permanezca. Eso sí, tendré que agrupar niveles, puesto que el AIC empeora. Síntoma de que la variable cuenta con muchos niveles. La tendencia en esta variable es muy buena.
+* **Nivel_Riesgo:** Presenta una alta correlación con muchas variable. **SE ELIMINA DEL MODELO INICIAL**
+
+Por el valor de las deltas de las AIC y de las devianza las variables más improtantes serían: condCarne, condScore y polAntiguedad.
+
+De este modo, se define el modelo inicial como sigue:
+
+```{r 4.5. Initial Model, message=FALSE, warning=FALSE}
+
+# Initial Model
+glmFreqInitialModel <- glm(NsinMatRC ~ condCarne + condScore + polAntiguedad + polTipo  + geoComunidad + vehPotencia + vehValor + vehCombustible + vehUso + vehPuertas + vehLong, offset=log(Exposicion), data=dataModel, family=poisson())
+
+FullDataMetricsFreqInitialModel  <- ModelAnalysisFinal(glmFreqInitialModel, glmFreqInitialModel, dataModel, "NsinMatRC", "Exposicion", fullFactors, listOrderFactLevels, CompareModels=F)
+
+initialFactors <- c("condCarne", "condScore", "polAntiguedad",  "polTipo", "geoComunidad", "vehPotencia", "vehValor", "vehCombustible", "vehUso", "vehPuertas", "vehLong")
+
+lapply(1:length(initialFactors), function(i){modelAnalysisPlotsFinal(FullDataMetricsFreqInitialModel, "RescaledPredictedValues","RescaledPredictedValues", initialFactors[i], "blue", "#FFA552", 8, 90, 0.5, 1)})
+
+# Saco de nuevo la matriz de correlaciones con las variables con las que me he quedado:
+
+factorsList = initialFactors
+
+# Crear una matriz vacía para almacenar los resultados
+VCramerFreqMatrix <- matrix(NA, nrow = length(factorsList), ncol = length(factorsList), dimnames = list(factorsList, factorsList))
+
+# Usar sapply para calcular la V de Cramer para cada combinación de variables
+VCramerFreqMatrix[] <- sapply(factorsList, function(var1) {
+ sapply(factorsList, function(var2) {
+   if (var1 != var2) {
+    calc_cramerV(dataModel, var1, var2)
+  } else {
+  1
+  }
+  })
+})
+
+VCramerFreqMatrix %>% reactViewTable
+
+# Generar el gráfico de correlaciones con colores personalizados
+corrplot(VCramerFreqMatrix, method = "color", 
+         col = brewer.pal(n = 8, name = "RdBu"), 
+         type = "lower", 
+         order = "hclust", 
+         addCoef.col = "black", 
+         tl.col = "black", 
+         tl.srt = 45, 
+         tl.cex = 0.55, # Ajustar el tamaño del texto en las etiquetas
+         number.cex = 0.7, # Ajustar el tamaño del texto de los valores de correlación
+         diag = FALSE)
+
+```
+
+Observo que vehLong y vehPotencia siguen teniedno una alta correlación con vehValor. Sin embargo, solo elimino **vehPotencia** puesto que vehLong presenta una muy buena tendencia.
+
+Además, elimino **vehUso** y **vehCombustible** porque me dan problemas de colinealidad y la infroamción que me aportan no la considero muy valiosa.
+
+De modo que:
+
+```{r 4.6. Initial Model 2, message=FALSE, warning=FALSE}
+
+# Initial Model 2
+glmFreqInitialModel <- glm(NsinMatRC ~ condCarne + condScore + polAntiguedad + polTipo  + geoComunidad + vehValor + vehPuertas + vehLong, offset=log(Exposicion), data=dataModel, family=poisson())
+
+FullDataMetricsFreqInitialModel  <- ModelAnalysisFinal(glmFreqInitialModel, glmFreqInitialModel, dataModel, "NsinMatRC", "Exposicion", fullFactors, listOrderFactLevels, CompareModels=F)
+
+initialFactors <- c("condCarne", "condScore", "polAntiguedad",  "polTipo", "geoComunidad", "vehValor", "vehPuertas", "vehLong")
+
+lapply(1:length(initialFactors), function(i){modelAnalysisPlotsFinal(FullDataMetricsFreqInitialModel, "RescaledPredictedValues","RescaledPredictedValues", initialFactors[i], "blue", "#FFA552", 8, 90, 0.5, 1)})
+
+# Saco de nuevo la matriz de correlaciones con las variables con las que me he quedado:
+
+factorsList = initialFactors
+
+# Crear una matriz vacía para almacenar los resultados
+VCramerFreqMatrix <- matrix(NA, nrow = length(factorsList), ncol = length(factorsList), dimnames = list(factorsList, factorsList))
+
+# Usar sapply para calcular la V de Cramer para cada combinación de variables
+VCramerFreqMatrix[] <- sapply(factorsList, function(var1) {
+ sapply(factorsList, function(var2) {
+   if (var1 != var2) {
+    calc_cramerV(dataModel, var1, var2)
+  } else {
+  1
+  }
+  })
+})
+
+VCramerFreqMatrix %>% reactViewTable
+
+# Generar el gráfico de correlaciones con colores personalizados
+corrplot(VCramerFreqMatrix, method = "color", 
+         col = brewer.pal(n = 8, name = "RdBu"), 
+         type = "lower", 
+         order = "hclust", 
+         addCoef.col = "black", 
+         tl.col = "black", 
+         tl.srt = 45, 
+         tl.cex = 0.55, # Ajustar el tamaño del texto en las etiquetas
+         number.cex = 0.7, # Ajustar el tamaño del texto de los valores de correlación
+         diag = FALSE)
+
+```
+
+### Modelo final
+
+Con el modelo de arriba, lo que hago ahora es en base de los análisis anteriores sería agrupar ciertos niveles de algunas variables y diseñar los polinomios de segundo grado sobre las variables que tengan sentido, que será sobre las variables: **condCarne**, **vehValor** y **vehLong**
+
+```{r 4.7. Final Model , message=FALSE, warning=FALSE}
+
+dataModelFreqFinal <- dataModel %>% finalChangesModFreqNoPol %>% finalChangesModFreqPol
+
+# Final Model
+glmFreqFinalModel <- glm(NsinMatRC ~ condCarneFin  + condScoreFin  + polAntiguedadFin  + polTipoFin + geoComunidadFin + vehValorFin  + vehPuertasFin + vehLongFin, offset=log(Exposicion), data=dataModelFreqFinal, family=poisson()) 
+
+# Final Model Simplified
+glmFreqFinalSimplifiedModel <- glm(NsinMatRC ~ poly(condCarneFinNumPOL1, 2) + poly(condCarneFinNumPOL2, 2) + condScoreFin  + polAntiguedadFin  + polTipoFin + geoComunidadFin + poly(vehValorFinNumPOL, 2)  +  vehPuertasFin + poly(vehLongFinNumPOL, 2), offset=log(Exposicion), data=dataModelFreqFinal, family=poisson())
+
+finalFullFactors <- get_names(dataModelFreqFinal %>% select(contains("Fin")),types = c('factor'))
+finalFactors <- c("condCarneFin", "condScoreFin", "polAntiguedadFin", "polTipoFin", "geoComunidadFin", "vehValorFin", "vehPuertasFin",  "vehLongFin")
+
+listOrderFactLevels <- list(
+
+condCarneFin = c(
+  "0-4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19",
+  "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35",
+  "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51",
+  "52", "53", "54", "55+"
+),
+
+condScoreFin = c("1", "2","3","4+", "Nuevos"),
+
+polAntiguedadFin  = c( "0", "1", "2", "3", "4", "5+"),
+
+polTipoFin = c("Semestral", "Anual"),
+
+geoComunidadFin = c("Comunidad de Madrid", "Resto"),
+
+vehValorFin = c(
+  "0-15000",
+  "15001-20000",
+  "20001-25000",
+  "25001-30000",
+  "30001-35000",
+  "35001-40000",
+  "40001-45000",
+  "45001-50000",
+  "50k+"
+),
+
+vehPuertasFin = c("-4","5","6"),
+
+vehLongFin = c(
+  "0-3500",
+  "3501-3750",
+  "3751-4000",
+  "4001-4250",
+  "4251-4500",
+  "4501-4750",
+  "4751-5000",
+  "5k+"
+),
+
+polPagoFin = c("Domiciliado","Efectivo"),
+
+vehPotenciaFin = c("0-20", "41-60", "61-80", "81-100", "101-120", "121-140", "141-160", "161-180", "181-200", "200+"),
+
+vehCombustibleFin = c("Diesel","Gasolina", "Otros"),
+
+vehUsoFin = c("Particular","Comercial"),
+
+vehClaseFin = c("BERLINA","FAMILIAR", "OTRO"),
+
+Nivel_RiesgoFin = c(
+  "Riesgo bajo - Valor bajo",
+  "Riesgo bajo - Valor medio",
+  "Riesgo bajo - Valor alto",
+  "Riesgo medio - Valor bajo",
+  "Riesgo medio - Valor medio",
+  "Riesgo medio - Valor alto",
+  "Riesgo alto - Valor bajo",
+  "Riesgo alto - Valor medio",
+  "Riesgo alto - Valor alto"
+))
+
+
+# Modelo Final
+FullDataMetricsFreqFinalModelNoPol  <- ModelAnalysisFinal(glmFreqFinalModel, glmFreqFinalModel, dataModelFreqFinal, "NsinMatRC", "Exposicion", finalFullFactors,listOrderFactLevels, finalChangesModFreqPol, CompareModels=F)
+
+FullDataMetricsFreqFinalModelNoPol %>% reactViewTable
+
+# Modelo Final simplificado
+FullDataMetricsFreqFinalModel  <- ModelAnalysisFinal(glmFreqFinalSimplifiedModel, glmFreqFinalSimplifiedModel, dataModelFreqFinal, "NsinMatRC", "Exposicion", finalFullFactors,listOrderFactLevels, finalChangesModFreqPol, CompareModels=F)
+
+FullDataMetricsFreqFinalModel %>% reactViewTable
+
+# Modelos auxiliares para medir el ajuste de los polinomios a las tendencias sin simplificar
+formulas <- list( 
+  
+NsinMatRC ~ condCarneFin + condScoreFin  + polAntiguedadFin  + polTipoFin + geoComunidadFin + poly(vehValorFinNumPOL, 2)  +  vehPuertasFin + poly(vehLongFinNumPOL, 2),
+
+NsinMatRC ~ poly(condCarneFinNumPOL1, 2) + poly(condCarneFinNumPOL2, 2) + condScoreFin  + polAntiguedadFin  + polTipoFin + geoComunidadFin + vehValorFin +  vehPuertasFin + poly(vehLongFinNumPOL, 2),
+
+NsinMatRC ~ poly(condCarneFinNumPOL1, 2) + poly(condCarneFinNumPOL2, 2) + condScoreFin  + polAntiguedadFin  + polTipoFin + geoComunidadFin + poly(vehValorFinNumPOL, 2)  +  vehPuertasFin + vehLongFin
+
+)
+
+listCUModelsRev <- lapply(formulas, function(formula) {
+  glm(formula, offset=log(Exposicion), data=dataModelFreqFinal, family=poisson())
+})
+
+listFullDataMetricsFinalModelCUPols <- lapply(1:length(listCUModelsRev), function(i){ModelAnalysisFinal(glmFreqFinalSimplifiedModel, listCUModelsRev[[i]], dataModelFreqFinal, "NsinMatRC", "Exposicion", finalFullFactors,listOrderFactLevels, finalChangesModFreqPol, CompareModels=T)})
+
+# Tendencias finales sin CU reescaladas y sin reescalar
+lapply(1:length(finalFactors), function(i){modelAnalysisPlotsFinal(FullDataMetricsFreqFinalModel, "RescaledPredictedValues", "RescaledPredictedValues", finalFactors[i], "blue", "#FFA552", 7, 90, 0.5, 1)})
+lapply(1:length(finalFactors), function(i){modelAnalysisPlotsFinal(FullDataMetricsFreqFinalModel, "PredictedValues", "PredictedValues", finalFactors[i], "blue", "#FFA552", 7, 90, 0.5, 1)})
+
+# Tendencias finales con CU para variables con polinomios sin reescalar
+
+factorsPol <- c("condCarneFin", "vehValorFin","vehLongFin")
+
+lapply(1:length(factorsPol), function(i){modelAnalysisPlotsFinal(listFullDataMetricsFinalModelCUPols[[i]], "RescaledPredictedValues", "NoPol_RescaledPredictedValues", factorsPol[i], "blue", "#FFA552", 7, 90, 0.5, 1)})
+lapply(1:length(factorsPol), function(i){modelAnalysisPlotsFinal(listFullDataMetricsFinalModelCUPols[[i]], "PredictedValues", "NoPol_PredictedValues", factorsPol[i], "blue", "#FFA552", 7, 90, 0.5, 1)})
+
+# Predicción VS Realidad
+lapply(1:length(finalFullFactors), function(i){modelPredObsPlotsFinal(FullDataMetricsFreqFinalModel, "Obs", "Pred", finalFullFactors[i], "purple", "blue", 7, 90, 0.5, 1)})
+
+
+
+```
+
+Una cosa interesante que se obtiene de esta bateria de gráficos es la **tendencia constante de la varaible vehLong**, contradictorio con la tendencia que se estaba viendo durante los análisis previos del ejercicio.
+
+# EJERCICIO 4: VALIDACIÓN DEL MODELO
+
+A diferencia del análisis anterior, ahora usaremos también la muestra de validación, de modo que:
+
+## Tendencias marginales y AvE
+
+```{r 5.1. Tendencias marginales y AvE, message=FALSE, warning=FALSE}
+
+dataModelFreqFinalVal <- preprocess(data %>% filter(samples == "Validation") %>% select(-samples))%>% finalChangesModFreqNoPol %>% finalChangesModFreqPol
+
+FullDataMetricsFreqFinalModelVal  <- ModelAnalysisFinal(glmFreqFinalSimplifiedModel, glmFreqFinalSimplifiedModel, dataModelFreqFinalVal, "NsinMatRC", "Exposicion", finalFullFactors,listOrderFactLevels, finalChangesModFreqPol, CompareModels=F)
+
+# Tendencias marginales
+listTrainTrend <- lapply(1:length(finalFactors), function(i){modelAnalysisPlotsFinal(FullDataMetricsFreqFinalModel, "PredictedValues", "PredictedValues", finalFactors[i], "blue", "#FFA552", 7, 90, 0.5, 1)})
+
+listTestTrend <- lapply(1:length(finalFactors), function(i){modelAnalysisPlotsFinal(FullDataMetricsFreqFinalModelVal, "PredictedValues", "PredictedValues", finalFactors[i], "blue", "#FFA552", 7, 90, 0.5, 1)})
+
+for (i in seq_along(listTrainTrend)) {
+ grid.arrange(listTrainTrend[[i]], listTestTrend[[i]], ncol = 2)
+}
+
+# AvE
+listTrainAvE <- lapply(1:length(finalFullFactors), function(i){modelPredObsPlotsFinal(FullDataMetricsFreqFinalModel, "Obs", "Pred", finalFullFactors[i], "purple", "blue", 7, 90, 0.5, 1)})
+
+listTestAvE <- lapply(1:length(finalFullFactors), function(i){modelPredObsPlotsFinal(FullDataMetricsFreqFinalModelVal, "Obs", "Pred", finalFullFactors[i], "purple", "blue", 7, 90, 0.5, 1)})
+
+for (i in seq_along(listTrainAvE)) {
+ grid.arrange(listTrainAvE[[i]], listTestAvE[[i]], ncol = 2)
+}
+
+```
+
+Tras hacer un estudio de validación AvE (gráficos de la derecha) vemos que:
+
+- **conCarneFin**: Predicción bastante buena. Se puede observar la tendencia.
+- **condScoreFin**: Predicción bastante buena, sobre todo en aquellos niveles con observacioens altas.
+- **polAntiguedadFin**: La predicción comparandola con los datos de validación está muy lograda.
+- **poTipoFin**: Al menos la predicción sigue la tendencia de la muestra de validación.
+- **geoComunidad**: Predicción bastante buena. Se puede observar la tendencia.
+- **vehValorFin**: Predicción bastante buena en los niveles con alta exposición. La predicción empeora considerablemente en los niveles con menor predicción.
+- **vehPuertasFin**: Predicción bastante buena en los niveles con alta exposición. La predicción empeora considerablemente en los niveles con menor predicción.
+- **vehLongFin**: La predicción no es muy buena.
+- **poPagoFin**: Al menos la predicción sigue la tendencia de la muestra de validación. Pero es mejorable, sobre todo en el nivel de menor exposición.
+- **vehPotenciaFin**: Predicción buena en los niveles con alta exposición. La predicción empeora considerablemente en los niveles con menor predicción. Se podría mejorar.
+- **vehCombustibleFin**: Predicción buena en los niveles con alta exposición. La predicción empeora considerablemente en los niveles con menor predicción.
+- **vehUsoFin**: Al menos la predicción sigue la tendencia de la muestra de validación. Pero es mejorable, sobre todo en el nivel de menor exposición.
+- **vehClaseFin**: Al menos la predicción sigue la tendencia de la muestra de validación. Pero es mejorable, sobre todo en el nivel de menor exposición.
+- **Nivel_RiesgoFin**: La tendencia de la prediccion en esta variable es realmente buena. *Realmente con esta prediccion, podemos hacer una buena estimación de la frecuencia sinestral en función del tipo de asegurado*.
+
+Dadas las conclusiones anteriores, se da el modelo **como validado y como aceptable**
+
+Pasamos ahora al impacto al análisis de impacto:
+
+## Análisis de impacto
+
+```{r 5.2. Análisis de impacto, message=FALSE, warning=FALSE}
+
+impactTrain <- impactAnalysis(glmFreqFinalSimplifiedModel, dataModelFreqFinal,"NsinMatRC", "Exposicion",  30)
+
+impactTest <- impactAnalysis(glmFreqFinalSimplifiedModel, dataModelFreqFinalVal,"NsinMatRC", "Exposicion",  30)
+
+ grid.arrange(impactTrain, impactTest, ncol = 2)
+ 
+```
+
+Vemos que el modelo a nivel general presenta una tendencia en la muestra de validación que tiene sentido, por lo que damos por bueno el modelo tomado.
+
+# EJERCICIO 5: SEVERIDAD DE DAÑOS Y CÁLCULO PRIMA PURA
+
+## Modelización severidad
+
+### Chequeos Iniciales - Distribucion
+
+Distribución del coste medio básicamente:
+
+```{r 6.1. DistribucionSev, message=FALSE, warning=FALSE}
+
+# CsinMatRC
+data %>% mutate(sevCorpRC= CsinMatRC/NsinMatRC) %>% filter(NsinMatRC>0) %>% edaDensityNum("sevCorpRC", 6000)
+
+```
+
+Cumple lo que sería una gamma teórica.
+
+Pasamos a calcular de nuevo las correlaciones entre las variables categóricas:
+
+### Correlaciones
+
+Se tienen que volver a calcular las variables, puesto que tenemos que tener en cuenta solamente los registros que han tenido reclamación, es decir NsinMatRC > 0:
+
+```{r 6.2. CorrelacionSev, message=FALSE, warning=FALSE}
+
+dataModelSev <- dataModel %>% filter(NsinMatRC > 0)
+
+factorsList = get_names(dataModelSev %>% filter(), types = c('factor'))
+
+# Crear una matriz vacía para almacenar los resultados
+VCramerSevMatrix <- matrix(NA, nrow = length(factorsList), ncol = length(factorsList), dimnames = list(factorsList, factorsList))
+
+# Usar sapply para calcular la V de Cramer para cada combinación de variables
+VCramerSevMatrix[] <- sapply(factorsList, function(var1) {
+ sapply(factorsList, function(var2) {
+   if (var1 != var2) {
+    calc_cramerV(dataModelSev, var1, var2)
+  } else {
+  1
+  }
+  })
+})
+
+VCramerSevMatrix %>% reactViewTable
+
+# Generar el gráfico de correlaciones con colores personalizados
+corrplot(VCramerSevMatrix, method = "color", 
+         col = brewer.pal(n = 8, name = "RdBu"), 
+         type = "lower", 
+         order = "hclust", 
+         addCoef.col = "black", 
+         tl.col = "black", 
+         tl.srt = 45, 
+         tl.cex = 0.55, # Ajustar el tamaño del texto en las etiquetas
+         number.cex = 0.7, # Ajustar el tamaño del texto de los valores de correlación
+         diag = FALSE)
+
+```
+Hay que considerar que pasaré a una baase de datos de tan solo 1863 registros, por lo que puede darse que algunos niveles de alguna variable coincidan siempre con otro nivel de otra variable.
+
+Conclusiones:
+
+- Nuevamente vemos una alta correlaciones de la variable **Nivel_Riesgo** con **vehValor** y con **condSocre**, como no puede ser de otra manera, al extraerse de ellas.
+- Fuerte correlación entre las variables: **vehCombustible**, **vehLong**, **vehPotencia** y **vehValor**. Destacar la correlación que presenta **vehPotencia** con **vehLong** y con **vehValor**.
+- **vehClase** también puede presetnar problemas de colinealidad al estar fuertemente correlacionada con **vehLong** y con **vehUso**.
+- Fuerte correlación entre las variables **polPago** y **polTipo**.
+
+De modo que, pasamos al análisis de las variables:
+
+### Análisis de las variables - Full Model - Tendencias de las variables
+
+Primero probamos un modelo completo, para ver las tendencias de todas las variables, igual que hicimos anteriormente para el estudio de la frecuencia siniestral:
+
+```{r 6.3. FullModelSev , message=FALSE, warning=FALSE}
+
+# Conjunto sólo con los registros que han tenido siniestro
+dataModelSev %>% reactViewTable
+
+# Full Model
+glmSevFullModel <- glm(CsinMatRC/NsinMatRC ~ condCarne  + condScore + polAntiguedad + polTipo  + polPago + geoComunidad + vehPotencia + vehValor + vehCombustible + vehUso + vehClase  + vehPuertas + vehLong + Nivel_Riesgo, weights = NsinMatRC, data=dataModelSev, family=Gamma(link = "log"))
+
+fullFactors <- c("condCarne", "condScore", "polAntiguedad", "polTipo", "polPago", "geoComunidad", "vehPotencia", "vehValor", "vehCombustible", "vehUso", "vehClase", "vehPuertas", "vehLong", "Nivel_Riesgo") # Cojo todas las variables factor de la base de datos
+
+listOrderFactLevels <- dataEda %>% select(contains("Fact")) %>% sapply(levels)
+listOrderFactLevels <- dataEda %>% select(contains("Fact")) %>% sapply(levels)
+names(listOrderFactLevels) <- names(listOrderFactLevels) %>% str_remove_all("Fact")
+
+FullDataMetricsSevFullModel  <- ModelAnalysisFinal(glmSevFullModel, glmSevFullModel, dataModelSev, "CsinMatRC", "NsinMatRC", fullFactors, listOrderFactLevels, CompareModels=F)
+
+FullDataMetricsFreqFullModel %>% reactViewTable
+
+
+lapply(1:length(fullFactors), function(i){modelAnalysisPlotsFinal(FullDataMetricsSevFullModel, "RescaledPredictedValues", "RescaledPredictedValues",fullFactors[i], "blue", "#FFA552", 8, 90, 0.5, 1)})
+
+
+```
+
+Conclusiones de las tendencias de las variables:
+
+* **condCarne:** En los niveles centrales, donde la masa estadística es mayor, parece que la tendencia es levemente creciente, lo que hace indicar un mayor coste de las indemnizaciones cuanto más años de carne tengo. Tiene sentido, seguramente, mi vehículo también empiece a tener más años.
+* **condScore:** No parece que haya una tendencia clara.
+* **polAntiguedad:** No parece que haya una tendencia clara.
+* **polTipo:** La gráfica da a entender que las pólizas de pago anual, tienen sinestralidades más costosas
+* **polPago:** La gráfica da a entender que las pólizas de pago domiciliadas, tienen sinestralidades más costosas que las de pago en efectivo.
+* **geoComunidad:** El hecho de que la mayor parte de la masa estadísitca se centre en la Comunidad de Madrid, hace que el gráfico no aporte información de calidad sobre la tendencia.
+* **vehPotencia:** No parece que haya una tendencia clara.
+* **vehValor:** Parece que en los primeros niveles , donde hay gran masa estadística, la tendencia es creciente. Se ve que los asegurados que se pueden permitir coches más caros, suelen reportar incidencias más costosas. Tiene sentido, cuanto mas caro sea el coche, más costosas serán sus reparaciones.
+* **vehCombustible:** Los asegurados con vehículos de gasolina suelen reportar incidencias más costosas. Puede tener sentido, dada la tecnología propia de un coche de gasolina con respecto a un diesel.
+* **vehUso:** Los asegurados con vehículos de uso comercial suelen reportar incidencias más costosas que los de uso particular. Tiene sentido, seguramente los daños sean más complicados de solucionar dado el tiempo de uso del vehículo.
+* **vehClase:** Este gráfico no tiene mucho sentido. No aporta información de calidad.
+* **vehPuertas:** El hecho de que la mayor parte de la masa estadísitca se centre en 5 puertas, hace que el gráfico no aporte información de calidad sobre la tendencia.
+* **vehLong:** Se aprecia una tendencia ligeramente decreciente, en los niveles intermedios de la variable, donde se centra la masa estadística.
+* **Nivel_Riesgo:** Por lo general, se observa una tendencia más o menos constante.
+
+### Análisis de las variables - Initial Model
+
+En base a lo comentado anteriormente sobre tendencias y correlacioens seleccionamos las siguientes variables: condCarne, condScore, vehUso, polTipo, geoComunidad, vehValor, vehPuertas y vehLong
+
+```{r 6.4. InitialModelSev , message=FALSE, warning=FALSE}
+
+# Initial Model
+glmSevInitialModel<- glm(CsinMatRC/NsinMatRC ~ condCarne + condScore + vehUso + polTipo + geoComunidad  + vehValor + vehPuertas + vehLong, weights = NsinMatRC, data=dataModelSev, family=Gamma(link = "log"))
+
+FullDataMetricsSevInitialModel  <- ModelAnalysisFinal(glmSevInitialModel, glmSevInitialModel, dataModelSev, "CsinMatRC", "NsinMatRC", fullFactors, listOrderFactLevels, CompareModels=F)
+
+initialFactors <- c("condCarne", "condScore", "vehUso",  "polTipo", "geoComunidad", "vehValor", "vehPuertas", "vehLong")
+
+lapply(1:length(initialFactors), function(i){modelAnalysisPlotsFinal(FullDataMetricsSevInitialModel, "RescaledPredictedValues","RescaledPredictedValues", initialFactors[i], "blue", "#FFA552", 7, 90, 0.5, 1)})
+
+
+```
+
+Destacar que en este modelo inicial, la **tendencia creciente** tan clara de los costes de las sinestralidades en la variable **vehValor**.
+
+Destacar también el **cambio de tendencia** de la variable **polTipo** tras este modelo inicial.
+
+Pasamos a la significatividad estadística.
+
+### Análisis de las variables - Significatividad estadística
+
+```{r 6.5. InitialModelSevSignifcatividad, message=FALSE, warning=FALSE}
+
+# Testeo estadístico variables incluidas: 
+
+glmSevInitialModelcondCarne <- glm(CsinMatRC/NsinMatRC ~ condScore + vehUso + polTipo + geoComunidad  + vehValor + vehPuertas + vehLong, weights = NsinMatRC, data=dataModelSev, family=Gamma(link = "log"))
+
+glmSevInitialModelcondScore<- glm(CsinMatRC/NsinMatRC ~ condCarne + vehUso + polTipo + geoComunidad  + vehValor + vehPuertas + vehLong, weights = NsinMatRC, data=dataModelSev, family=Gamma(link = "log"))
+
+glmSevInitialModelvehUso<- glm(CsinMatRC/NsinMatRC ~ condCarne + condScore + polTipo + geoComunidad  + vehValor + vehPuertas + vehLong, weights = NsinMatRC, data=dataModelSev, family=Gamma(link = "log"))
+
+glmSevInitialModelpolTipo<- glm(CsinMatRC/NsinMatRC ~ condCarne + condScore + vehUso + geoComunidad  + vehValor + vehPuertas + vehLong, weights = NsinMatRC, data=dataModelSev, family=Gamma(link = "log"))
+
+glmSevInitialModelgeoComunidad <- glm(CsinMatRC/NsinMatRC ~ condCarne + condScore + vehUso + polTipo + vehValor + vehPuertas + vehLong, weights = NsinMatRC, data=dataModelSev, family=Gamma(link = "log"))
+
+glmSevInitialModelvehValor<- glm(CsinMatRC/NsinMatRC ~ condCarne + condScore + vehUso + polTipo + geoComunidad + vehPuertas + vehLong, weights = NsinMatRC, data=dataModelSev, family=Gamma(link = "log"))
+
+glmSevInitialModelvehPuertas<- glm(CsinMatRC/NsinMatRC ~ condCarne + condScore + vehUso + polTipo + geoComunidad  + vehValor + vehLong, weights = NsinMatRC, data=dataModelSev, family=Gamma(link = "log"))
+
+glmSevInitialModelvehLong <- glm(CsinMatRC/NsinMatRC ~ condCarne + condScore + vehUso + polTipo + geoComunidad  + vehValor + vehPuertas, weights = NsinMatRC, data=dataModelSev, family=Gamma(link = "log"))
+
+listModelsIncluded <- list(glmSevInitialModelcondCarne, glmSevInitialModelcondScore, glmSevInitialModelvehUso, glmSevInitialModelpolTipo, glmSevInitialModelgeoComunidad, glmSevInitialModelvehValor, glmSevInitialModelvehPuertas, glmSevInitialModelvehLong)
+
+names(listModelsIncluded) <- initialFactors
+
+
+resultStatisticalSigVarInclud <- lapply(initialFactors, function(x){comparar_modelos_glm( listModelsIncluded[[x]], glmSevInitialModel)}) %>% bind_rows() %>% mutate(Variable = initialFactors ) %>% relocate(Variable, .before = AICc_modelo_con)
+
+resultStatisticalSigVarInclud %>% reactViewTable()
+
+```
+
+Análisis de la AIC y de la devianza:
+
+* **condCarne:** La devianza me indica que lo mejor es que esta variable permanezca. Eso sí, tendré que agrupar niveles, puesto que el AIC empeora. Síntoma de que la variable cuenta con muchos niveles. Además la variable tiene una tendencia bien definida.
+* **condScore:** Tanto la devianza como el AIC mejoran si permanece la variable.
+* **vehUso:** Realmente ni mejora ni empeora gran cosa que la variable permanezca o no
+* **polTipo:** Realmente ni mejora ni empeora gran cosa que la variable permanezca o no
+* **geoComunidad:** Tanto la devianza como el AIC mejoran si permanece la variable.
+* **vehValor:** Tanto la devianza como el AIC mejoran si permanece la variable. La tendencia en esta variable es muy buena.
+* **vehPuertas:** Realmente ni mejora ni empeora gran cosa que la variable permanezca o no. Eso sí, convendría agrupar algunos niveles.
+* **vehLong:** La devianza me indica que lo mejor es que esta variable permanezca. Eso sí, tendré que agrupar niveles, puesto que el AIC empeora. Síntoma de que la variable cuenta con muchos niveles.
+
+Como los estadísiticos me indican que ninuna de las variables es mejor eliminarlas del modelo, me quedo con estas.
+
+### Final Model
+
+```{r 6.6. FinalModelSev , message=FALSE, warning=FALSE}
+
+dataModelSevFinal <-finalChangesModSevNoPol(dataModelSev)
+
+# Final Model
+glmSevFinalModel <- glm(CsinMatRC/NsinMatRC ~ condCarneFin + condScoreFin + vehUsoFin + polTipoFin + geoComunidadFin  + vehValorFin + vehPuertasFin + vehLongFin, weights = NsinMatRC, data=dataModelSevFinal, family=Gamma(link = "log"))
+
+
+finalFullFactors <- get_names(dataModelSevFinal %>% select(contains("Fin")),types = c('factor'))
+finalFactors <- c("condCarneFin", "condScoreFin", "vehUsoFin", "polTipoFin", "geoComunidadFin", "vehValorFin", "vehPuertasFin", "vehLongFin")
+
+listOrderFactLevels <- list(
+
+condCarneFin = c(
+  "0-4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19",
+  "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35",
+  "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51",
+  "52", "53", "54", "55+"
+),
+
+condScoreFin = c("1", "2","3","4", "5", "6", "7", "Nuevos"),
+
+polAntiguedadFin  = c( "0", "1", "2", "3", "4", "5+"),
+
+polTipoFin = c("Semestral", "Anual"),
+
+geoComunidadFin = c("Comunidad de Madrid", "Resto"),
+
+vehValorFin = c(
+  "0-15000",
+  "15001-20000",
+  "20001-25000",
+  "25001-30000",
+  "30001-35000",
+  "35001-40000",
+  "40001-45000",
+  "45001-50000",
+  "50001-55000",
+  "55000+"
+),
+
+vehPuertasFin = c("-4","5","6"),
+
+vehLongFin = c(
+  "0-3500",
+  "3501-3750",
+  "3751-4000",
+  "4001-4250",
+  "4251-4500",
+  "4501-4750",
+  "4751-5000",
+  "5k+"
+),
+
+polPagoFin = c("Domiciliado","Efectivo"),
+
+vehPotenciaFin = c("0-20", "41-60", "61-80", "81-100", "101-120", "121-140", "141-160", "161-180", "181-200", "200+"),
+
+vehCombustibleFin = c("Diesel","Gasolina", "Otros"),
+
+vehUsoFin = c("Particular","Comercial"),
+
+vehClaseFin = c("BERLINA","FAMILIAR", "OTRO"),
+
+Nivel_RiesgoFin = c(
+  "Riesgo bajo - Valor bajo",
+  "Riesgo bajo - Valor medio",
+  "Riesgo bajo - Valor alto",
+  "Riesgo medio - Valor bajo",
+  "Riesgo medio - Valor medio",
+  "Riesgo medio - Valor alto",
+  "Riesgo alto - Valor bajo",
+  "Riesgo alto - Valor medio",
+  "Riesgo alto - Valor alto"
+))
+
+FullDataMetricsSevFinalModel  <- ModelAnalysisFinal(glmSevFinalModel, glmSevFinalModel, dataModelSevFinal, "CsinMatRC", "NsinMatRC", finalFullFactors, listOrderFactLevels, CompareModels=F)
+
+FullDataMetricsSevFinalModel %>% reactViewTable
+
+# Tendencias finales
+lapply(1:length(finalFactors), function(i){modelAnalysisPlotsFinal(FullDataMetricsSevFinalModel, "RescaledPredictedValues","RescaledPredictedValues", finalFactors[i], "blue","#FFA552",  7, 90, 0.5, 1)})
+
+
+# Predicción VS Realidad
+lapply(1:length(finalFullFactors), function(i){modelPredObsPlotsFinal(FullDataMetricsSevFinalModel, "Obs", "Pred", finalFullFactors[i], "purple", "darkblue", 7, 90, 0.5, 1)})
+
+
+```
+
+Dada la disminución de la masa estadística, aparecen cosas extrañas. No osbtante, se pueden sacar puntos interesantes:
+
+1- Tendencia decrecinte de la variable "polAntiguedad".
+2- Tendencia creciente de la variable "vehValor". Además, la predicción del modelo se aproxima muy bien a lo observado
+3- Tendencia creciente de la variable "vehLong".
+4- Tendencia creciente de la variable "vehPotencia". Además, la predicción del modelo se aproxima muy bien a lo observado, sobre todo, en los niveles donde se concentra la exposición.
+5- Tendencia creciente de la variable "Nivel_Riesgo".
+
+### Validación modelo final de severdiad
+
+```{r 6.7. ValidatonModelSev , message=FALSE, warning=FALSE}
+
+dataModelSevFinalVal <- preprocess(data %>% filter(samples == "Validation") %>% filter(NsinMatRC > 0) %>% select(-samples))%>% finalChangesModSevNoPol
+
+FullDataMetricsSevFinalModelVal  <- ModelAnalysisFinal(glmSevFinalModel, glmSevFinalModel, dataModelSevFinalVal, "CsinMatRC", "NsinMatRC", finalFullFactors, listOrderFactLevels, CompareModels=F)
+
+# Tendencias marginales
+listTrainTrend <- lapply(1:length(finalFactors), function(i){modelAnalysisPlotsFinal(FullDataMetricsSevFinalModel, "PredictedValues", "PredictedValues", finalFactors[i], "blue", "#FFA552", 7, 90, 0.5, 1)})
+
+listTestTrend <- lapply(1:length(finalFactors), function(i){modelAnalysisPlotsFinal(FullDataMetricsSevFinalModelVal, "PredictedValues", "PredictedValues", finalFactors[i], "blue", "#FFA552", 7, 90, 0.5, 1)})
+
+for (i in seq_along(listTrainTrend)) {
+ grid.arrange(listTrainTrend[[i]], listTestTrend[[i]], ncol = 2)
+}
+
+# AvE
+listTrainAvE <- lapply(1:length(finalFullFactors), function(i){modelPredObsPlotsFinal(FullDataMetricsSevFinalModel, "Obs", "Pred", finalFullFactors[i], "purple", "darkblue", 7, 90, 0.5, 1)})
+
+listTestAvE <- lapply(1:length(finalFullFactors), function(i){modelPredObsPlotsFinal(FullDataMetricsSevFinalModelVal, "Obs", "Pred", finalFullFactors[i], "purple", "darkblue", 7, 90, 0.5, 1)})
+
+for (i in seq_along(listTrainAvE)) {
+ grid.arrange(listTrainAvE[[i]], listTestAvE[[i]], ncol = 2)
+}
+
+```
+
+En cuanto a la validación del modelo con la muestra de validación, comentar:
+
+1- Destacar la buena aproximación con la muestra de validación en las variables **vehValor**, **vehPotencia** y **vehLong**, sobre todo en los niveles de mayor exposición.
+2- Dada la baja masa estadística de la muestra de validación, es normal que el modelo se aproxime en ciertas variables.
+
+### Análisis de impacto
+
+```{r 6.8. impactAnalysisSev, message=FALSE, warning=FALSE}
+
+impactTrain <- impactAnalysis(glmSevFinalModel, dataModelSevFinal,"CsinMatRC", "NsinMatRC",  15)
+
+impactTest <- impactAnalysis(glmSevFinalModel, dataModelSevFinalVal,"CsinMatRC", "NsinMatRC",  15)
+
+ grid.arrange(impactTrain, impactTest, ncol = 2)
+ 
+```
+
+Con las muestras de entrenamiento, el modelo sí que se aproxima en general, pero no tanto con la muestra d validación, seguramente por lo comentado de la escasa masa estadística de la muestra. Al menos, la tendencia sí que parece coherente.
+
+## Cálculo de la prima pura
+
+Hacemos la predicción con la base de datos, imaginando que fueran datos futuros. Hay que realizar a los datos el preprocesado inicial y las transformaciones finales de la modelización.
+
+```{r 6.9. CalcPrimas, message=FALSE, warning=FALSE}
+
+# 1. Preparar datos de predicción
+newdata <- preprocess(data) %>%
+  finalChangesModFreqNoPol %>%
+  finalChangesModFreqPol %>%
+  mutate(Exposicion = 1)
+
+# 2. Calcular predicciones de frecuencia, severidad y prima pura
+newdata$Frecuencia <- predict(glmFreqFinalSimplifiedModel, newdata = newdata, type = "response")
+newdata$Severidad <- predict(glmSevFinalModel, newdata = preprocess(data) %>% finalChangesModSevNoPol, type = "response")
+newdata$PrimaPura <- newdata$Frecuencia * newdata$Severidad
+
+# 3. Calcular estadísticos de la Prima Pura
+summary_stats <- summary(newdata$PrimaPura)
+media <- mean(newdata$PrimaPura, na.rm = TRUE)
+
+# 4. Extraer los valores objetivo (cuantiles y extremos)
+valores_objetivo <- c(
+  Min = summary_stats[1],
+  Q1 = summary_stats[2],
+  Mediana = summary_stats[3],
+  Q3 = summary_stats[5],
+  Max = summary_stats[6]
+)
+
+# 5. Convertir Nivel_Riesgo a texto (si es factor)
+newdata$Nivel_Riesgo <- as.character(newdata$Nivel_Riesgo)
+
+# 6. Buscar el Nivel_Riesgo más cercano a cada valor objetivo
+niveles_riesgo <- sapply(valores_objetivo, function(v) {
+  fila <- which.min(abs(newdata$PrimaPura - v))
+  newdata$Nivel_Riesgo[fila]
+})
+
+# 7. Construir tabla resumen
+tabla_resumen <- data.frame(
+  Estadístico = c("Mínimo", "1er Cuartil (Q1)", "Mediana", "3er Cuartil (Q3)", "Máximo", "Media"),
+  Prima_Pura = round(c(valores_objetivo, media), 2),
+  Nivel_Riesgo = c(niveles_riesgo, NA)  # No se asigna riesgo a la media
+)
+
+# 8. Mostrar la tabla con kableExtra
+tabla_resumen %>%
+  kable("html", caption = "Resultados de la Prima Pura con Nivel de Riesgo", align = "lcc") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+                   
+```
+
+Parece que todos los estadísticos encajan con su nivel de riesgo, salvo el del tercer cuartil. También es destacable el gran salto que existe entre el tercer cuartil y el valor máximo de la prima.
+
+
