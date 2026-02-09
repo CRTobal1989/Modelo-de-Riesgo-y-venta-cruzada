@@ -1,0 +1,1241 @@
+---
+title: "25.05.25_Cuestión 2 - Modelo de Venta Cruzada_Cristóbal León-Salas"
+author: "Cristóbal León-Salas"
+date: "2025-05-25"
+output:
+  html_document:
+    theme: cerulean
+    highlight: kate
+    fig_width: 8
+    fig_height: 5
+    fig_caption: true
+    code_folding: show
+    number_sections: true
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: false
+---
+<center>
+
+![](img/Seguro_Terceros.jpg)
+</center>
+
+```{r 0.0. setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  fig.align = 'center',
+  fig.width = 12,  # Esto actúa como un valor base
+  fig.height = 5,  # También un valor base
+  out.width = '100%',  # Asegura que el ancho se ajuste
+  out.height = '80%'   # Ajusta el alto al 80%
+)
+options(warn = -1) #Para eliminar los mensajes Warnings del KML generado
+
+```
+
+# INTRODUCCIÓN
+
+En el presente ejercicio se va a abordar la elaboración de un modelo de venta cruzada orientado a identificar, entre los clientes con seguro de hogar, aquellos con mayor probabilidad de contratar también un seguro de auto. Formando parte del departamento de Analytics de una compañía de seguros de No Vida con un importante volumen de negocio en la península ibérica, y trabajando de forma estrecha con el equipo de Marketing, este proyecto responde a una necesidad estratégica: optimizar los esfuerzos comerciales y mejorar la retención de clientes a largo plazo mediante la multiaseguración. Para ello, se construirá un modelo supervisado a partir de información histórica de clientes a quienes ya se les ofreció este producto adicional, y cuya respuesta (positiva o negativa) servirá como variable objetivo. El proceso incluirá un análisis exploratorio (EDA) que permita detectar patrones útiles para la segmentación y priorización comercial.
+
+## Carga de librerias
+
+Se cargan todas las librerias que van a ser utilizadas durante el ejercicio.
+
+```{r 0.1. Carga de librerias}
+
+#Se cargan todas las librerias que van a ser usadas durante el ejercicio:
+
+enable_packages <- function(x){
+  for( i in x ){
+    if( ! require( i , character.only = TRUE ) ){
+      install.packages( i , dependencies = TRUE )
+      require( i , character.only = TRUE )
+    }
+  }
+}
+
+# install.packages(
+# "https://cran.r-project.org/src/contrib/Archive/InformationValue/InformationValue_1.2.3.tar.gz",
+# repos = NULL,
+#     type = "source"
+# )
+
+# Paquetes
+enable_packages(c("data.table", "tidyverse","reactable", "h2o" ,"formattable", "janitor", "parallel", "skimr", "Information", "InformationValue", "creditmodel", "grid", "gridExtra", "corrplot", "vcd", "DataExplorer", "kableExtra", "RColorBrewer"))
+
+# Quitamos notación científica
+options(scipen = 999)
+
+```
+
+## Funciones
+
+### Funciones auxiliares
+
+Función para mostrar una tabla interactiva con formato especial en columnas ojetivo.
+
+```{r 0.2.1. Función reactViewTableTarget}
+
+reactViewTableTarget <- function(data, vecTargetVar){
+  
+  # Crea una lista con el estilo especial para las columnas objetivo (target)
+  coldefsTargets <- list(
+    colDef(
+      headerStyle = "background: gold; color: black;",  # Encabezado: fondo dorado, texto negro
+      style = "background: #FEF9E7;",                   # Celdas: fondo amarillo claro
+      class = "border-left"                             # Clase CSS extra opcional (puede usarse en estilos externos)
+    )
+  )
+
+  # Replica el estilo anterior para todas las variables en 'vecTargetVar'
+  coldefsTargets <- rep(coldefsTargets, length(vecTargetVar))
+
+  # Asigna los nombres de las variables target como nombres de las columnas a formatear
+  names(coldefsTargets) <- vecTargetVar 
+
+  data %>%
+    reactable(
+      bordered = TRUE,                # Bordes entre celdas
+      filterable = FALSE,            # No permite filtros por columna
+      resizable = TRUE,              # Columnas redimensionables
+      searchable = TRUE,             # Barra de búsqueda global activada
+      showPageSizeOptions = TRUE,    # Muestra opciones de filas por página
+      defaultPageSize = 10,          # Tamaño de página por defecto: 10 filas
+      pageSizeOptions = c(5, 10, 20, 50, 100),  # Opciones para cambiar el tamaño de página
+      borderless = FALSE,            # Bordes visibles
+      highlight = TRUE,              # Resalta la fila al pasar el cursor
+      outlined = TRUE,               # Contorno exterior a la tabla
+      showSortIcon = TRUE,           # Muestra iconos de ordenación
+      showSortable = TRUE,           # Permite ordenar columnas
+      width = "100%",                # Ocupa todo el ancho disponible
+      
+      # Estilo por defecto para todas las columnas (excepto las target)
+      defaultColDef = colDef(
+        align = "center",            # Centra el contenido en las celdas
+        headerStyle = "background: #000080; color: white;",  # Encabezados: fondo verde oscuro, texto blanco
+        style = "background: #efeee0;",  # Fondo beige para celdas
+        
+        
+        cell = function(value) {
+          # Formateo de valores: sin decimales si es entero, con 2 si es decimal
+          if (!is.na(value) && is.numeric(value)) {
+            if (value %% 1 == 0) {
+              return(as.integer(value))  # Entero sin decimales
+            } else {
+              return(format(round(value, 2), nsmall = 2))  # Decimal con 2 cifras
+            }
+          } else {
+            return(value)  # Para texto, NA o factores: mostrar tal cual
+          }
+        }
+      ),
+
+      # Estilo específico para las columnas target
+      columns = coldefsTargets
+    )
+}
+
+```
+
+### Función reactViewTable
+
+Función para visualizar un data frame como tabla interactiva con estilo personalizado
+
+```{r  0.2.2. Función reactViewTable}
+
+reactViewTable <- function(data){
+
+  data %>%
+    reactable(
+      bordered = TRUE,                # Muestra bordes entre celdas
+      filterable = FALSE,            # No permite aplicar filtros por columna
+      resizable = TRUE,              # Permite redimensionar el ancho de las columnas
+      searchable = TRUE,             # Activa una barra de búsqueda global
+      showPageSizeOptions = TRUE,    # Permite al usuario cambiar el número de filas por página
+      defaultPageSize = 10,          # Número de filas por página por defecto
+      pageSizeOptions = c(5, 10, 20, 50, 100),  # Opciones disponibles para paginación
+      borderless = FALSE,            # Si fuera TRUE, elimina los bordes (aquí se mantienen)
+      highlight = TRUE,              # Resalta la fila al pasar el cursor por encima
+      outlined = TRUE,               # Añade un borde general alrededor de la tabla
+      showSortIcon = TRUE,           # Muestra iconos de ordenación en los encabezados
+      showSortable = TRUE,           # Permite ordenar las columnas haciendo clic en los encabezados
+      width = "100%",                # La tabla ocupa el 100% del ancho disponible en el contenedor
+
+      # Configuración por defecto para todas las columnas
+      defaultColDef = colDef(
+        align = "center",            # Centra el contenido de todas las celdas
+
+        headerStyle = "background: blue; color: white;",  # Estilo del encabezado: fondo verde oscuro, texto blanco
+        style = "background: #efeee0;",                      # Estilo de fondo para todas las celdas: beige claro
+
+        # Función para personalizar el contenido de las celdas
+        cell = function(value) {
+          if (is.na(value)) {
+            return("")               # Si el valor es NA, se deja la celda vacía
+          } else if (is.numeric(value)) {
+            if (value %% 1 == 0) {
+              return(as.integer(value))  # Si el valor es entero, se muestra sin decimales
+            } else {
+              return(format(round(value, 2), nsmall = 2))  # Si tiene decimales, se redondea a 2 cifras
+            }
+          } else {
+            return(value)            # Si no es numérico, se devuelve tal cual (texto, factor, etc.)
+          }
+        }
+      )
+    )
+}
+
+```
+
+### Función df_iv
+
+Función para calcular el information value de cada variable
+
+```{r 0.2.3. Función df_iv}
+
+df_iv <- function(df, var, bins){
+         var <- as.symbol(var)
+         df <- df %>% select(!!var, Contratado)
+         iv <- create_infotables(data=df, y='Contratado', bins=bins,parallel=FALSE)
+         return(iv)
+}
+
+```
+
+### Función agrupación variable Edad:
+
+```{r 0.2.4. Función bucket_edad}
+
+bucket_edad <- function(variable){
+        ifelse(variable <= 23, 'Edad_bucket_01',
+        ifelse(variable > 23 & variable <= 27, 'Edad_bucket_02',
+        ifelse(variable > 27 & variable <= 40, 'Edad_bucket_03',
+        ifelse(variable > 40 & variable <= 51, 'Edad_bucket_04',
+        'Edad_bucket_05'
+        )
+        ) 
+        )
+        )
+}
+
+```
+
+### Función agrupación variable Prima Mensual:
+
+```{r 0.2.5. Función bucket_prima_mensual}
+
+bucket_prima_mensual <- function(variable){
+        ifelse(variable <= 123.06, 'pm_bucket_01',
+        ifelse(variable > 123.06 & variable <= 172.49, 'pm_bucket_02',
+        ifelse(variable > 172.49 & variable <= 207.9, 'pm_bucket_03',
+        ifelse(variable > 207.9 & variable <= 256.09, 'pm_bucket_04',
+        'pm_bucket_05'
+        )
+        ) 
+        )
+        )
+}
+
+```
+
+### Función agrupación variable Antiguedad_Cliente:
+
+```{r 0.2.6. Función bucket_Antiguedad_Cliente}
+
+bucket_Antiguedad_Cliente <- function(variable){
+        ifelse(variable <= 5, 'AC_bucket_01',
+        ifelse(variable > 5 & variable <= 10, 'AC_bucket_02',
+        ifelse(variable > 10 & variable <= 15, 'AC_bucket_03',
+        ifelse(variable > 15 & variable <= 20, 'AC_bucket_04',
+        'AC_bucket_05'
+        )
+        ) 
+        )
+        )
+}
+
+```
+
+### Función WOE
+
+```{r 0.2.7. Función WOE}
+
+woe_variable <- function(variable){
+woe_variable <- WOETable(variable, data$Contratado, valueOfGood=1) #cálculo WOE/IV 
+woe_variable <- woe_variable %>% rename(Categoria=CAT, Propensos_no=BADS, Propensos_yes=GOODS, 
+                                          PCT_yes=PCT_G, PCT_no=PCT_B) 
+                                        
+  return(woe_variable)
+}
+
+```
+
+### Función propensión
+
+```{r 0.2.8. Función propensión}
+
+# Función para obtener las tasas de propensión y el porcentaje de la población por tramo
+propension <- function(df, var){
+  
+total_op=nrow(df)
+  
+var <- as.symbol(var)  
+df1 <- df %>% group_by(!!var, Contratado) %>% summarize(cliente_prop=n())
+
+var <- as.symbol(var) 
+df2 <- df %>% group_by(!!var) %>% summarize(muestra_grupo=n())
+
+df3 <- left_join(df1, df2)
+
+df3 <- df3 %>% mutate(op_total=total_op, tasa_propension=cliente_prop/muestra_grupo, muestra_total=muestra_grupo/total_op)
+
+df_defaults=df3 %>% filter(Contratado==1) %>% select(-Contratado) # operaciones en default para representar
+
+df_defaults=df_defaults %>% select(!!var, muestra_grupo, muestra_total, cliente_prop, tasa_propension) 
+
+return(df_defaults)
+}
+
+```
+
+### Función propension_grafico
+
+```{r 0.2.9. Función propension_grafico}
+
+# Función para graficar el comportamiento de las tasas de propensión
+propension_grafico <- function(df, var){
+  
+  var <- as.symbol(var) #campo para graficar
+
+  grafico <- ggplot(df, aes(!!var, tasa_propension)) + 
+  geom_col(aes(y = muestra_grupo), fill="#849c94", alpha=1.0) + 
+  geom_line(aes(y=tasa_propension * 350000 ), group = 1, color="black") + 
+  geom_text(aes(y = tasa_propension * 350000, label =   
+            paste(round(tasa_propension*100,2),'%')),
+            vjust = 1.4, color = "black", size = 4) + labs(y= "")+
+  theme_classic() +
+  theme(axis.text.x = element_text( vjust=0.6),
+        axis.text=element_text(size=12),
+        axis.title=element_text(size=14,face="bold"),
+        legend.position="bottom", legend.title = element_blank())
+
+grafico
+  
+}
+
+```
+
+### Función calc_cramerV
+
+Función para calcular la V de Cramer entre dos variables categóricas:
+
+```{r 0.2.10. Función calc_cramerV}
+
+calc_cramerV <- function(data, var1, var2) {
+  # Asegura que los nombres de variables están bien y extrae las columnas como vectores
+  x <- droplevels(as.factor(data[[var1]]))
+  y <- droplevels(as.factor(data[[var2]]))
+  
+  # Si alguno tiene menos de 2 niveles, devuelve NA
+  if (nlevels(x) < 2 || nlevels(y) < 2) return(NA)
+  
+  # Calcula tabla de contingencia
+  tbl <- table(x, y)
+  
+  # Aplica test chi-cuadrado
+  chi2 <- suppressWarnings(chisq.test(tbl, correct = FALSE))
+  
+  # Calcula V de Cramer
+  sqrt(chi2$statistic / (sum(tbl) * (min(nlevels(x), nlevels(y)) - 1)))
+}
+
+```
+
+### Función Matriz de confusión
+
+```{r 0.2.11. Función Matriz de confusión}
+
+#función que reporta la matriz de confusión para los modelos H2O -> muestra de validación
+matriz_confusion <- function(modelo, sample){  
+ performance <- h2o.performance(modelo, newdata = sample)
+  df <- as.data.frame(h2o.confusionMatrix(performance)) #matriz de confusión
+  return(df)
+}
+
+```
+
+### Función Curva ROC
+
+```{r 0.2.12. Función Curva ROC}
+
+curva_roc <- function(modelo){
+
+list(modelo) %>% 
+  # map a function to each element in the list
+  map(function(x) x %>% h2o.performance(train=F, valid=T) %>% 
+        # from all these 'paths' in the object
+        .@metrics %>% .$thresholds_and_metric_scores %>% 
+        # extracting true positive rate and false positive rate
+        .[c('tpr','fpr')] %>% 
+        # add (0,0) and (1,1) for the start and end point of ROC curve
+        add_row(tpr=0,fpr=0,.before=T) %>% 
+        add_row(tpr=0,fpr=0,.before=F)) %>% 
+
+  # add a column of model name for future grouping in ggplot2
+  map2(c('Regresión Logística - Validación'),
+        function(x,y) x %>% add_column(model=y)) %>% 
+  # reduce four data.frame to one
+  reduce(rbind) %>% 
+  # plot fpr and tpr, map model to color as grouping
+  ggplot(aes(fpr,tpr,col=model))+
+  geom_line()+
+  geom_segment(aes(x=0,y=0,xend = 1, yend = 1),linetype = 2,col='grey')+
+  xlab('Tasa de falsos positivos')+
+  ylab('Tasa de verdaderos positivos')+
+  ggtitle('Curva Roc')
+  
+}
+
+```
+
+### Función Score
+
+```{r 0.2.13. Función Score}
+
+score <- function(df){
+
+df <- as.data.table(df) # conversión a data.table
+
+# tramos de score según PD -> 10 tramos
+df <- df[, rating := 
+              ifelse(p1 > 0.9550, '01',
+              ifelse(p1 > 0.8750 & p1 <= 0.9550, '02',
+              ifelse(p1 > 0.650 & p1 <= 0.8750, '03',
+              ifelse(p1 > 0.5275 & p1 <= 0.650, '04',
+              ifelse(p1 > 0.310 & p1 <= 0.5275, '05',
+              ifelse(p1 > 0.2255 & p1 <= 0.310, '06',
+              ifelse(p1 > 0.1850 & p1 <= 0.2255, '07',
+              ifelse(p1 > 0.1250 & p1 <= 0.1850, '08',
+              ifelse(p1 > 0.0775 & p1 <= 0.1250, '09',
+              '10')
+                ) ) ) ) 
+                ) ) ) )
+                ]
+
+df <- df %>% select(p0, p1, rating)
+}
+
+```
+
+### Función probabilidad media
+
+```{r 0.2.14. Función probabilidad media}
+
+# Función probabilidad de conversión media para cada grupo de rating
+prob_medias <- function(df){
+              df <- df %>% group_by(rating) %>% 
+                                            summarise(num=n(), 
+                                            total_muestra= num/nrow(df),    
+                                            media_prob=mean(p1)
+                                                     )
+              return(df %>% reactViewTable)
+}
+
+```
+
+### Función densidad
+
+```{r 0.2.15. Función densidad}
+
+# función que permite conocer la distribución de las probabilidades del modelo
+densidad <- function(df, var, bins=20) {
+  a <- as.symbol(var)
+  plot <- ggplot(df, aes(!!a)) + geom_histogram(fill = "blue", bins=bins)
+  plot <- plot + labs(y = '') + theme_bw()
+  plot 
+}
+
+```
+
+
+
+# VARIABLES INICIALES Y CARGA DE DATOS
+
+## Carga de datos
+
+Según el enunciado, la base de datos cuenta con las siguientes variables:
+
+```{r 1.1. Variables iniciales}
+
+# Crear la tabla
+tabla_variables <- data.frame(
+  VARIABLE = c("Identificador", "Sexo", "Edad", "Carnet", "Zona", "AntigüedadVehiculo",
+               "SiniestroAnterior", "PrimaMensualActual", "AntiguedadCliente", "Contratado"),
+  DENOMINACIÓN = c(
+    "Identificación única del cliente",
+    "Sexo del cliente",
+    "Edad del cliente en años",
+    "Indicador de si el cliente tiene o no licencia de conducción vigente",
+    "Zona de España en la que reside el asegurado",
+    "Edad del vehículo en años",
+    "Indicador de si ha tenido un siniestro de auto anteriormente o no. Es decir, si ha hecho uso de su actual o anteriores seguros de auto con otras compañías",
+    "Prima mensual actualmente pagada.",
+    "Antigüedad del cliente en meses",
+    "Indica si se contrató (1) o no (0), el seguro de auto teniendo ya con la compañía suscrito el de hogar. Es la variable de respuesta."
+  ),
+  `TIPO DE VARIABLE` = c(
+    "IDENTIFICADOR", "EXPLICATIVA", "EXPLICATIVA", "EXPLICATIVA", "EXPLICATIVA",
+    "EXPLICATIVA", "EXPLICATIVA", "EXPLICATIVA", "EXPLICATIVA", "OBJETIVO"
+  ),
+  `A TENER EN CUENTA` = c(
+    "N/A", "N/A", "Mirar si la edad es menor de 18 años", "Cuidado con los que no tienen carnet", "Ojo con los 0, puede ser que el asegurado no tenga coche",
+    "N/A", "N/A", "N/A", "N/A", "N/A"
+  ),
+  stringsAsFactors = FALSE
+)
+
+# Mostrar con formato elegante
+kable(tabla_variables, format = "html", escape = FALSE) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
+
+```
+
+A continuación, se cargan y se muestran los datos del conjuto de entrenamiento.
+
+```{r 1.2. Carga de datos entrenamiento}
+
+data <- as.data.frame(read.csv('dataVCTrainCasoPractico.csv', encoding = "latin1")) 
+data %>% head(1000) %>% reactViewTableTarget(c( "Contratado"))
+  
+cat("En total hay", dim(data)[1], "registros y", dim(data)[2], "variables\n")
+
+```
+
+# EJERCICIO 1: ANÁLISIS DE LOS DATOS Y VARIABLES
+
+Se lleva a cabo un pequeño EDA
+
+## EDA
+
+```{r 2.1. EDA, message=FALSE, warning=FALSE}
+
+# resumen de los datos: tipo de variable, los valores missing, media y desviación típica, cuartiles, etc. 
+summary <- skim(data) 
+summary <- summary %>% select(skim_variable, n_missing, 
+                              numeric.mean, numeric.sd, 
+                              numeric.p25, numeric.p50, numeric.p75)
+summary %>% reactViewTable()
+
+sum(is.na(data$Edad))
+unique(data$Edad)
+
+# Imputo el nivel "desconocido" de la variable Edad al mayoritario en función de la variable AntiguedadCliente:
+
+data <- data %>%
+  group_by(AntiguedadCliente) %>%
+  mutate(
+    # Nivel más frecuente de Edad dentro de cada grupo (excluyendo "desconocido")
+    edad_mas_frec = names(which.max(table(Edad[Edad != "Desconocido"]))),
+    Edad = ifelse(Edad == "Desconocido", edad_mas_frec, Edad)
+  ) %>%
+  ungroup() %>%
+  select(-edad_mas_frec)
+
+```
+
+La varibale **Contratado** es una variable binaria de 0 y 1. El hecho de que la media salga 0,12 da a entender de que la mayor parte de los asegurados de salud, no estarían interesados en contratar el servicio de autos. Además, se observa que el percentil 75 sigue siendo 0.
+
+Por otro lado, hay variables sobre las cuales no aparecen valores en la tabla de arriba y debería tener, al ser, por naturaleza variables numéricas discretas  y otras donde sí aparecen valores y en realidad, son varibles categóricas. Procedo a corregir esta circunstancia:
+
+```{r 2.2. Corrección estructura variables, message=FALSE, warning=FALSE}
+
+data <- data  %>% mutate(Identificador = as.character (Identificador), Carnet = as.character(Carnet), Edad = as.integer(Edad)
+                         )
+
+# Procedo de nuevo a mostra el análisis general de las variables tras esta modificación:
+
+# summary <- skim(data) 
+
+summary <- skim(data) 
+summary <- summary %>% select(skim_variable, n_missing, 
+                              numeric.mean, numeric.sd, 
+                              numeric.p25, numeric.p50, numeric.p75)
+summary %>% reactViewTable()
+
+```
+
+## Análisis variable respuesta
+
+Estudiamos la proporción en la que aparece la variable respuesta:
+
+```{r 2.3. Análisis variable respuesta, message=FALSE, warning=FALSE}
+
+target_group <- data %>% tabyl(Contratado)
+target_group <- target_group %>% mutate(Percent=round(percent,4)*100) %>% rename(N=n) %>% select(-percent)
+
+target_group %>% reactViewTable()
+
+# Se pasa la variable respuesta a categórica:
+
+data <- data %>% mutate(Contratado_char = as.character(Contratado))
+
+```
+
+En línea con lo anterior, un 12,26 % de los registros de la base de datos aceptaron tener una póliza de seguros de autos, teniendo ya la de salud, lo que supone que tenemos una **muestra desbalanceada** en una problema de clasificación binaria. No obstante, no es un desbalanceo muy importante, y por el momento, no llevamos ninguna acción sobre él.
+
+## Análisis de las variables explicativas
+
+En primer lugar estudiado la distribución de las variables categóricas
+
+```{r 2.4. Distribución variables categóricas, message=FALSE, warning=FALSE}
+
+data %>% select(-c('Contratado', 'Contratado_char')) %>% plot_bar()
+
+data %>% select(-'Contratado')  %>% plot_bar(by='Contratado_char')
+
+```
+
+Se observa lo siguiente:
+
+**Carnet**: Como se indicaba arriba, esta variable se podria eliminar, porque práctimente todos los registros tienen carnet, y de no tenerlo, no tendria sentido proponer ampliar su póliza con un seguro de autos.
+**AntiguedadVehículo**: Quizás tenga sentido agrupar los valores de esta variable que son iguales o mayores a 5.
+**SiniestroAnterior**: Aqui podemos tener un problema de autorpredictividad, puesto que prácticamente, todos los valores correspondientes al nivel "No" tiene un 0 en la variable respuesta.
+
+
+```{r 2.5. Agrupación variable AntiguedadVehículo,  message = FALSE, warning = FALSE}
+
+data <- data %>%
+    mutate(AntiguedadVehiculoFact = case_when(
+    AntiguedadVehiculo %in% c("0","1","2","3","4") ~ as.character(AntiguedadVehiculo), 
+    T ~ "+5")) %>% select (-AntiguedadVehiculo)
+
+```
+
+Una vez realizado el análisis anterior, vamos a ver como de buenas son las variables para definir la variable respuesta. Para ello, calcularemos los WOE de cada uno de los atributos de las variables y con ellos, caluclamos los Information Values de cada variable. De modo que:
+
+# EJERCICIO 2: CALCULO WOEs e IVs
+
+## 4 Iteraciones
+
+```{r 3.1. Calculo IVs - 4 Iteraciones, message = FALSE, warning = FALSE}
+
+# Voy a tener 3 variables numéricas sobre las que calcular los WOEs e IVs: 1) Edad, 2) PrimaMensualActual y 3) AntiguedadCliente.
+
+set.seed(1234)
+
+list_iter <- list(
+  sample(2:6, 4),
+  sample(2:6, 4),
+  sample(2:6, 4)
+)
+
+# Cuadro resumen de las iteraciones con el número de rangos en cada variable:
+
+tabla_ITER <- data.frame(
+  ITERACIONES = c("Primera", "Segunda", "Tercera", "Cuarta"),
+  EDAD = list_iter[[1]],
+  PRIMA_MENSUAL = list_iter[[2]],
+  ANTIGUEDAD_CLIENTE = list_iter[[3]],
+  stringsAsFactors = FALSE
+)
+
+# Mostrar tabla con formato elegante
+kable(tabla_ITER, format = "html", escape = FALSE) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
+
+# Cálculo de WOE e IV por iteración
+
+tabla_IVs = data.frame()
+
+for (i in 1:length(list_iter[[1]])) {
+  
+  n_1 = list_iter[[1]][i]
+  n_2 = list_iter[[2]][i]
+  n_3 = list_iter[[3]][i]
+  
+  Edad <- df_iv(data, 'Edad', n_1)
+  PrimaMensualActual <- df_iv(data, 'PrimaMensualActual', n_2)
+  AntiguedadCliente <- df_iv(data, 'AntiguedadCliente', n_3)
+  
+  # Extraer IVs del cuarto elemento (suponiendo que es el que te interesa)
+  iv_edad <- Edad[["Tables"]][["Edad"]][["IV"]][nrow(Edad[["Tables"]][["Edad"]])]
+  iv_prima <- PrimaMensualActual[["Tables"]][["PrimaMensualActual"]][["IV"]][nrow(PrimaMensualActual[["Tables"]][["PrimaMensualActual"]])]
+  iv_antiguedad <- AntiguedadCliente[["Tables"]][["AntiguedadCliente"]][["IV"]][nrow(AntiguedadCliente[["Tables"]][["AntiguedadCliente"]])]
+  
+  # Añadir fila a la tabla
+  tabla_IVs <- rbind(tabla_IVs, data.frame(
+    Iteracion = i,
+    IV_Edad = iv_edad,
+    IV_Prima = iv_prima,
+    IV_Antiguedad = iv_antiguedad
+  ))
+}
+
+# Mostrar tabla resumen
+kable(tabla_IVs, format = "html", escape = FALSE) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
+
+```
+
+Dados los resultados anteriores y con lo objeto de maximizar el IV de cada una de las variables, llevaré a cabo la siguiente agrupación:
+
+**EDAD**: La primera iteración es la que maximiza el IV, es decir, agrupación de la variable en 5 tramos.
+**PRIMA_MENSUAL**: La segunda iteración es la que maximiza el IV, es decir, agrupación de la variable en 5 tramos.
+**ANTIGUEDAD_CLIENTE**: La tercera iteración es la que maximiza el IV, es decir, agrupación de la variable en 5 tramos.
+
+## Calculos de los WOEs
+
+En base a los resultados anteiores se obtienen los WOEs
+
+```{r 3.2. Calculos de los WOEs, message = FALSE, warning = FALSE}
+
+Edad <- df_iv(data, 'Edad', 5)
+PrimaMensualActual <- df_iv(data, 'PrimaMensualActual', 5)
+AntiguedadCliente <- df_iv(data, 'AntiguedadCliente', 5)
+
+# tablas WOE e IV de las variables - por categoría
+
+Edad$Tables$Edad %>% reactViewTable()
+PrimaMensualActual$Tables$PrimaMensualActual %>% reactViewTable()
+AntiguedadCliente$Tables$AntiguedadCliente %>% reactViewTable()
+
+```
+
+Dado los resultados de las tablas anteriores, se observa que la variable **EDAD** es muy discriminante, sobre todo en los primeros tramos, además en sentido negativo del WOE, lo que viene a significar que los asegurados más jóvenes no están interesados en ampliar la póliza a una de autos. Por otro lado, se observa que las variables **PrimaMensualActual** y **AntiguedadCliente** no resultan ser muy discriminantes de la variable respuesta.
+
+Se llevan a cabo las agrupaciones en base a los resultados anteriores:
+
+## Agrupaciones variables numéricas
+
+```{r 3.3. Agrupaciones variables numéricas, message = FALSE, warning = FALSE}
+
+data$Edad_bucket <- bucket_edad(data$Edad)
+data$Prima_Mensual_bucket <- bucket_prima_mensual(data$PrimaMensualActual)
+data$AntiguedadCliente_bucket <- bucket_Antiguedad_Cliente(data$AntiguedadCliente)
+
+data %>% head(1000)  %>% reactViewTable()
+
+```
+
+## Cálculo IVs variables categóricas
+
+Pasamos a calcular el IV de las variables categóricas para mostrar la importancia de cada una de ellas:
+
+```{r 3.4. Cálculo IV variables categóricas, message = FALSE, warning = FALSE}
+
+# Pasamos las variables a categoricas:
+
+data$Sexo <- as.factor(data$Sexo)
+data$Carnet <- as.factor(data$Carnet)
+data$Zona <- as.factor(data$Zona)
+data$SiniestroAnterior <- as.factor(data$SiniestroAnterior)
+data$AntiguedadVehiculoFact <- as.factor(data$AntiguedadVehiculoFact)
+data$Edad_bucket <- as.factor(data$Edad_bucket)
+data$Prima_Mensual_bucket <- as.factor(data$Prima_Mensual_bucket)
+data$AntiguedadCliente_bucket <- as.factor(data$AntiguedadCliente_bucket)
+
+# Cálculo de los WOEs:
+
+woe_Sexo<- woe_variable(data$Sexo)
+woe_Carnet<- woe_variable(data$Carnet)
+woe_Zona <- woe_variable(data$Zona)
+woe_SiniestroAnterior <- woe_variable(data$SiniestroAnterior)
+woe_AntiguedadVehiculoFact <- woe_variable(data$AntiguedadVehiculoFact)
+woe_Edad_bucket <- woe_variable(data$Edad_bucket)
+woe_Prima_Mensual_bucket <- woe_variable(data$Prima_Mensual_bucket)
+woe_AntiguedadCliente_bucket <- woe_variable(data$AntiguedadCliente_bucket)
+
+listWoe <- list(woe_Sexo, woe_Carnet, woe_Zona, woe_SiniestroAnterior, woe_AntiguedadVehiculoFact, woe_Edad_bucket, woe_Prima_Mensual_bucket, woe_AntiguedadCliente_bucket)
+
+for (tabla in listWoe) {
+  print(reactViewTable(tabla))
+}
+
+```
+
+Se observa que la variable **SiniestroAnterior** es una variable muy discriminante, dado los valores de WOE y IV.
+
+Vemos ahora la propensión al "SÍ" de cada una de las variables:
+
+```{r 3.5. Propensión variables, message = FALSE, warning = FALSE}
+
+Sexo_bucket_agg <- propension(data, 'Sexo')
+propension_grafico(Sexo_bucket_agg, 'Sexo')
+
+Carnet_bucket_agg <- propension(data, 'Carnet')
+propension_grafico(Carnet_bucket_agg, 'Carnet')
+
+Zona_bucket_agg <- propension(data, 'Zona')
+propension_grafico(Zona_bucket_agg, 'Zona')
+
+SiniestroAnterior_bucket_agg <- propension(data, 'SiniestroAnterior')
+propension_grafico(SiniestroAnterior_bucket_agg, 'SiniestroAnterior')
+
+AntiguedadVehiculoFact_bucket_agg <- propension(data, 'AntiguedadVehiculoFact')
+propension_grafico(AntiguedadVehiculoFact_bucket_agg, 'AntiguedadVehiculoFact')
+
+Edad_bucket_agg <- propension(data, 'Edad_bucket')
+propension_grafico(Edad_bucket_agg, 'Edad_bucket')
+
+Prima_Mensual_bucket_agg <- propension(data, 'Prima_Mensual_bucket')
+propension_grafico(Prima_Mensual_bucket_agg, 'Prima_Mensual_bucket')
+
+AntiguedadCliente_bucket_agg <- propension(data, 'AntiguedadCliente_bucket')
+propension_grafico(AntiguedadCliente_bucket_agg, 'AntiguedadCliente_bucket')
+
+```
+
+Dado los resultados anteriores, se concluye que:
+
+**SEXO**: No parece que tenga una discriminancia clara, puesto que todos los niveles contienen un valor de "%" de valores de respuesta "Sí" muy parecido.Parecido también al "%" de "Sí" de la muestra global.
+**CARNET**: Muy poca exposición en el nivel "0". Además, es normal que si no tienes carnet, no se contrate un seguro de autos, por lo que esta variable puede resultar autopredictiva. Además no parece muy discriminante
+**ZONA**: Parece que esta variable presenta cierta discriminidad en el nivel "Centro".
+**SINIESTROANTERIOR**: Variable autopredictiva. Si no has tenido siniestro anteriormente, lo normal es que no se contrate el seguro de autos.
+**ANTIGUEDADVEHÍCULOFACT**: Variable muy discriminante en el nivel "+5"
+**EDAD_BUCKET**: Variable muy discriminante en los niveles "bucket_03", "bucket_04" y "bucket_05"
+**PRIMA_MENSUAL_BUCKET**: No parece que tenga una discriminancia clara, puesto que todos los niveles contienen un valor de "%" de valores de respuesta "Sí" muy parecido.Parecido también al "%" de "Sí" de la muestra global.
+**ANTIGUEDADCLIENTE_BUCKT**: No parece que tenga una discriminancia clara, puesto que todos los niveles contienen un valor de "%" de valores de respuesta "Sí" muy parecido.Parecido también al "%" de "Sí" de la muestra global.
+
+Muestro a continuación las IV de todas las variables:
+
+```{r 3.6. IV variables predictoras, message = FALSE, warning = FALSE}
+
+# resultados IV para la variable
+
+variables <- c('Sexo','Carnet', 'Zona',
+                'SiniestroAnterior', 'AntiguedadVehiculoFact',
+               'Edad_bucket', 'Prima_Mensual_bucket', 'AntiguedadCliente_bucket')
+
+iv <- c(sum(woe_Sexo$IV),
+        sum(woe_Carnet$IV),
+        sum(woe_Zona$IV),
+        sum(woe_SiniestroAnterior$IV),
+        sum(woe_AntiguedadVehiculoFact$IV),
+        sum(woe_Edad_bucket$IV),
+        sum(woe_Prima_Mensual_bucket$IV),
+        sum(woe_AntiguedadCliente_bucket$IV)
+       )
+
+
+IV_variables <- data.frame(Variable = variables, IV=round(iv,3)) %>%
+                                                                arrange(desc(IV))
+
+IV_variables %>% reactViewTable()
+
+```
+Dados lo resultados anteriores, se elimina del dataframe final para la regresión logística las variables cuyos valor de IV supere el 0.5 y sea menor de 0.02, de este modo, se eliminan las variables:
+
+- SiniestroAnterior.
+- Carnet.
+- AntiguedadCliente_bucket.
+
+AntiguedadVehiculoFact se mantiene, al encontrarse su IV muy cerca del valor límite (0.5).
+
+
+```{r 3.7. Dataframe final, message = FALSE, warning = FALSE}
+
+drop_variables <- c('SiniestroAnterior', 'Carnet', 'AntiguedadCliente_bucket', 'Identificador', 'Edad',
+                    'PrimaMensualActual', 'Contratado_char', 'AntiguedadCliente')
+
+
+datos_fin <- data %>% select(-all_of(drop_variables))
+
+datos_fin %>% head(1000) %>% reactViewTable()
+
+```
+
+## Correlación variables categóricas
+
+Sacamos ahora las correlaciones de las variables anteriores, a partir del cálculo de la V de Cramer, para ver las correlaciones entre las varaibles y si conviene sacar alguna variable de la regresión logística.
+
+```{r 3.8. Correlaciones variables categóricas, message = FALSE, warning = FALSE}
+
+# matriz de variables explicativas
+tabla_cor <- datos_fin %>% select(-Contratado)
+
+factorsList = get_names(tabla_cor,types = c('factor'))
+
+# Crear una matriz vacía para almacenar los resultados
+VCramerFreqMatrix <- matrix(NA, nrow = length(factorsList), ncol = length(factorsList), dimnames = list(factorsList, factorsList))
+
+# Usar sapply para calcular la V de Cramer para cada combinación de variables
+VCramerFreqMatrix[] <- sapply(factorsList, function(var1) {
+ sapply(factorsList, function(var2) {
+   if (var1 != var2) {
+    calc_cramerV(tabla_cor, var1, var2)
+  } else {
+  1
+  }
+  })
+})
+
+VCramerFreqMatrix %>% reactViewTable
+
+# Generar el gráfico de correlaciones con colores personalizados
+corrplot(VCramerFreqMatrix, method = "color", 
+         col = brewer.pal(n = 8, name = "RdBu"), 
+         type = "lower", 
+         order = "hclust", 
+         addCoef.col = "black", 
+         tl.col = "black", 
+         tl.srt = 45, 
+         tl.cex = 0.55, # Ajustar el tamaño del texto en las etiquetas
+         number.cex = 0.7, # Ajustar el tamaño del texto de los valores de correlación
+         diag = FALSE)
+
+```
+## Dataframe final
+
+Se observa una fuerte correlación entre las variables Edad_bucket y AntiguedadVehiculoFact. Como esta última tenía una IV algo fuera de rango al encontrarse por encima de 0.5, la saco del dataframe final.
+
+```{r 3.9. Dataframe final_v2, message = FALSE, warning = FALSE}
+
+drop_variables <- c('AntiguedadVehiculoFact')
+
+datos_fin <- datos_fin %>% select(-all_of(drop_variables))
+
+datos_fin %>% head(1000) %>% reactViewTable()
+
+```
+
+# EJERCICIO 3: REGRESIÓN LOGÍSTICA H2O
+
+## Inicio H2O
+
+```{r 4.1. Inicio H2O , message = FALSE, warning = FALSE}
+
+n_cores = detectCores()  # cores del ordenador
+
+#iniciación del cluster
+h2o.init(ip = "localhost",
+         # uso de todos los cores del ordenador -1
+         nthreads = n_cores-1,
+         # máxima memoria disponible para el cluster.
+         max_mem_size = "4g")
+
+```
+## Modelización H2O
+
+Pasamos a H2O las variables del modelo y dividimos la muestra en entrenamiento y validación:
+
+```{r 4.2. Modelización H2O, message = FALSE, warning = FALSE}
+
+#Dejamos ya identificadas las variables para introducirlas en los modelos
+Y <- c('Contratado') #variable respuesta
+
+X <- colnames(datos_fin %>% select(-'Contratado')) #variable explicativa
+
+
+muestra_h2o <- as.h2o(datos_fin)
+
+muestra_h2o[, Y] <- as.factor(muestra_h2o[, Y])
+
+
+n=222 # valor para la semilla pseudo aleatoria
+split = 0.75 # train - validation
+
+muestra <- h2o.splitFrame(data = muestra_h2o, ratios = split, seed = n) 
+
+entrenamiento <- muestra[[1]]
+validacion <- muestra[[2]]
+
+table.H2OFrame(entrenamiento$Contratado) %>% as.data.frame() %>% reactViewTable()
+
+table.H2OFrame(validacion$Contratado) %>% as.data.frame() %>% reactViewTable()
+
+```
+
+Como puede verse, la muestra está altamente desbalanceada; esto se debe a que gran parte de los clientes actuales no piensan en contratar un nuevo seguro con la compañía.
+
+Pasamos ahora a definir el modelo de Regreseión logística:
+
+```{r 4.3. Regresión logística, message = FALSE, warning = FALSE}
+
+modelo_factor = h2o.glm(x=X, 
+                        y=Y, 
+                        training_frame = entrenamiento,
+                        validation_frame = validacion,
+                        seed = n, 
+                        family = 'binomial', 
+                        link = 'logit', 
+                        lambda=0,
+                        compute_p_values = T, # incluyendo la significancia de las variables 
+                        standardize = T, # estandarizando los resultados
+                        remove_collinear_columns = TRUE)
+
+modelo_factor@model$coefficients_table %>% reactViewTable
+modelo_factor@model$variable_importances %>% reactViewTable
+
+# Pasamos a hallar la importancia de cada categoría de las variables por medio del coeficiente que aplican en la regresión:
+
+h2o.std_coef_plot(modelo_factor, num_of_features = 20)
+
+
+df_coeficientes_peso <- modelo_factor@model$coefficients_table %>% left_join(modelo_factor@model$variable_importances,
+                                                                             by=c('names' = 'variable')) %>% arrange(desc(percentage))
+
+df_coeficientes_peso$relative_importance <- NULL # eliminamos esta variable
+
+
+# obtenemos los factores de riesgo del modelo
+df_coeficientes_peso$factor_riesgo <- ifelse(df_coeficientes_peso$names=="Intercept", 
+                                             NA, 
+                                             exp(df_coeficientes_peso$coefficients))
+
+df_coeficientes_peso[is.na(df_coeficientes_peso)] <- "."   # reemplazamos en Na por punto (información en intercepto)
+
+
+df_coeficientes_peso %>% reactViewTable
+
+```
+
+## Categorías importantes - Top 3
+
+Dados los resultados anteriores, se definen las tres categorías más importantes:
+
+```{r 4.4. Categorías importantes - Top 3, message = FALSE, warning = FALSE}
+
+Importance_cat = modelo_factor@model$variable_importances
+
+kable(head(Importance_cat,3), format = "html", escape = FALSE) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
+
+
+h2o.std_coef_plot(modelo_factor, num_of_features = 3)
+
+```
+
+# EJERCICIO 4: INTERPRETACIÓN DEL MODELO
+
+En línea con los resultados obtenidos anteriormente, la variable **Edad** es la más importante y dentro de ella, las categorías: bucket 04, bucket 03 y bucket 05. Todas ellas, al ser muy discriminante ante una respuesta positiva de la variable respuesta, aportan un coefciente positivo a la regresión logística.
+
+Lo que se concluye es que las personas de mayor edad tienden a contratarlo.
+
+Un aspecto interesante es ver que sea cual sea el sexo (con idenpendencia del desconocido), siempre va a tener un efeco negativo, eso sí, se podría decir, que los hombres son menos reticentes a contratarlo al ser su coeficiente "menos negativo".
+
+## Interpretación del factor de riesgo
+
+Tomamos dos categorias, una con un valor de factor de riesgo por encima de uno, por ejemplo **Edad_bucket.Edad_bucket_04** y otra por debajo de 1, **Sexo.Female**.
+
+El factor de riesgo se podria interpretar como cuantas veces es más probable que tenga valor positivo la variable respuesta con respecto a que sea negativo. Por ello, si este valor es mayor de 1, el coeficiente en la regresión de esta categoría será positivo y si es menor de 1, este coeficiente será negativo.
+
+# EJERCICIO 5: MATRIZ DE CONFUSIÓN Y CURVA ROC
+
+## Matriz de confusión y curva ROC
+
+```{r 5.1. Matriz de confusión y curva ROC, message = FALSE, warning = FALSE}
+
+paste('Matriz de Confusión - Entrenamiento')
+matriz_confusion(modelo_factor, sample=entrenamiento) %>% reactViewTable()
+
+paste('Matriz de Confusión - Validación')
+matriz_confusion(modelo_factor, sample=validacion) %>% reactViewTable()
+
+#métrica auc roc 
+roc_train <- as.data.frame(h2o.auc(modelo_factor)) #AUC entrenamiento
+colnames(roc_train) <- 'ROC_train'
+roc_val<- as.data.frame(h2o.auc(modelo_factor, valid = TRUE)) #AUC validación
+colnames(roc_val) <- 'ROC_val'
+
+bind_cols(roc_train, roc_val) %>% reactViewTable()
+
+# función pintar curva roc - muestra validación
+curva_roc(modelo_factor)
+
+```
+
+El valor ROC es 0.69, próximo a 0.7, por lo que se podría decir que el modelo no es muy bueno, pero puede ser válido.
+
+## ROC corregido
+
+Al tener una muestra tan desbalanceada, la gran cantidad de verdaderos negativos generalmente eclipsa los efectos de los cambios en los falsos positivos. Por ello, es mejor calcular el AUPCR, pues es mucho más sensible tanto a los falsos positivos como los verdaderos positivos y los falsos negativos que el AUC.
+
+
+```{r 5.2. ROC corregido, message = FALSE, warning = FALSE}
+#métrica auc roc - prc
+rocpr_train <- as.data.frame(h2o.aucpr(modelo_factor))#AUCPR entrenamiento
+colnames(rocpr_train) <- 'ROCPR_train'
+rocpr_val<- as.data.frame(h2o.aucpr(modelo_factor, valid = TRUE)) #AUCPR validación
+colnames(rocpr_val) <- 'ROCPR_val'
+
+bind_cols(rocpr_train, rocpr_val) %>% reactViewTable()
+
+```
+
+Como el valor es el mismo tanto para entrenamiento como para validación, se puede indicar que el modelo está bien ajustado.
+
+## Predicción por probabilidad - Muestra de validación
+
+Se realiza la predicción del modelo con la muestra de validación:
+
+```{r 5.3. Predicción por probabilidad en muestra de validación, message = FALSE, warning = FALSE, fig.align='center', fig.width=12, fig.height=6}
+
+pred_validation <- h2o.predict(modelo_factor, newdata = validacion)
+pred_validation <- as.data.frame(pred_validation)
+
+head(pred_validation,10) %>% reactViewTable
+
+densidad(pred_validation, 'p1')
+
+```
+
+## Thresholds
+
+Se saca el threshold que usa H2O para determinar si una predicción es 1 o 0 en funnción de la probabilidad p1:
+
+```{r 5.4. Thresholds, message = FALSE, warning = FALSE}
+
+thresholds <- pred_validation %>%
+  select(predict, p1) %>%
+  group_by(predict) %>%
+  summarise(
+    max_p1_if_class0 = if (0 %in% predict) max(p1[predict == 0]) else NA_real_,
+    min_p1_if_class1 = if (1 %in% predict) min(p1[predict == 1]) else NA_real_
+  )
+
+thresholds %>% reactViewTable()
+
+```
+
+Como se puede observar este threholds se situa entorno al 0.155.
+
+```{r 5.5. Rating probabilidades, message = FALSE, warning = FALSE}
+
+max(pred_validation$p1)
+
+# Se observa que la predicción p1 máxima es 0.396155, por lo que no habrá grupos menores de 05. Por ello:
+
+rating_validation <- score(pred_validation)
+
+prob_medias(rating_validation)
+
+```
+
+Tiene sentido, sí. Al estar la muestra desbalanceada, es normal que todos los registros presenten probabilidades muy bajas de alcanzar el valor 1 en la variable respuesta. De ahí la explicacion de que el threeshold empleado por H2O sea tan bajo también.
+
+# EJERCICIO 6: PREDICCIÓN FUTURA
+
+## Carga datos futuros
+
+```{r 6.1. Carga datos futuros, message = FALSE, warning = FALSE}
+
+test <- as.data.frame(read.csv('dataVCTestCasoPractico.csv', encoding = "latin1")) 
+
+test$Identificador <- NULL
+
+test %>% head(1000) %>% reactViewTable
+
+```
+
+## Preprocesado datos futuros
+
+Se adapta la muestra de datos para ser utilizada correctamente por el modelo:
+
+```{r 6.2. Preprocesado datos futuros, message = FALSE, warning = FALSE}
+
+# resumen de los datos: tipo de variable, los valores missing, media y desviación típica, cuartiles, etc. 
+summary <- skim(test) 
+summary <- summary %>% select(skim_variable, n_missing, 
+                              numeric.mean, numeric.sd, 
+                              numeric.p25, numeric.p50, numeric.p75)
+
+summary %>% reactViewTable()
+
+unique(test$Edad)
+
+# Imputo el nivel "desconocido" de la variable Edad al mayoritario en función de la variable AntiguedadCliente:
+
+test <- test %>%
+  group_by(AntiguedadCliente) %>%
+  mutate(
+    # Nivel más frecuente de Edad dentro de cada grupo (excluyendo "desconocido")
+    edad_mas_frec = names(which.max(table(Edad[Edad != "Desconocido"]))),
+    Edad = ifelse(Edad == "Desconocido", edad_mas_frec, Edad)
+  ) %>%
+  ungroup() %>%
+  select(-edad_mas_frec)
+
+# Reestructuro los datos
+
+test <- test  %>% mutate(Carnet = as.character(Carnet), Edad = as.integer(Edad)
+                         )
+
+# Procedo de nuevo a mostra el análisis general de las variables tras esta modificación:
+
+summary <- skim(test) 
+summary <- summary %>% select(skim_variable, n_missing, 
+                              numeric.mean, numeric.sd, 
+                              numeric.p25, numeric.p50, numeric.p75)
+summary %>% reactViewTable()
+
+# Trameado de las variables numéricas que van a ser utilizadas en el modelo
+test$Edad_bucket <- bucket_edad(test$Edad)
+test$Prima_Mensual_bucket <- bucket_prima_mensual(test$PrimaMensualActual)
+
+drop_variables <- c('Edad', 'Carnet', 'AntiguedadVehiculo', 'SiniestroAnterior', 'PrimaMensualActual','AntiguedadCliente')
+
+test_fin <- test %>% select(-all_of(drop_variables))
+
+# Paso las variables a factor:
+
+test_fin$Sexo = as.factor(test_fin$Sexo)
+test_fin$Zona = as.factor(test_fin$Zona)
+test_fin$Edad_bucket = as.factor(test_fin$Edad_bucket)
+test_fin$Prima_Mensual_bucket = as.factor(test_fin$Prima_Mensual_bucket)
+
+```
+
+## Inclusión en H2O
+
+Inclusión al formato de *h2o.ai* y realización de las predicciones
+
+```{r 6.3. Inclusión en H2O, message = FALSE, warning = FALSE}
+
+test_h2o <- as.h2o(test_fin)
+
+pred_test <- as.data.frame(h2o.predict(modelo_factor, newdata=test_h2o))
+
+head(pred_test, 1000) %>% reactViewTable()
+
+```
+
+## Predicción agrupadas por probabilidades
+
+```{r 6.4. Predicción agrupadas por probabilidades, message = FALSE, warning = FALSE}
+
+rating_test <- score(pred_test)
+
+prob_medias(rating_test)
+
+```
+
+## Distribución probabilidad p1
+
+```{r 6.5. Distribución probabilidad p1, message = FALSE, warning = FALSE}
+
+densidad(pred_test, 'p1')
+
+# Calculo de los cuartiles
+valores_objetivo <- c(
+  Min = min(pred_test$p1),
+  Q1 <- quantile(pred_test$p1, 0.25, na.rm = TRUE),
+  Mediana <- quantile(pred_test$p1, 0.5, na.rm = TRUE),
+  Q1 <- quantile(pred_test$p1, 0.75, na.rm = TRUE),
+  Max = max(pred_test$p1),
+  Media = mean(pred_test$p1)
+)
+
+# Construir tabla resumen
+tabla_resumen <- data.frame(
+  Estadístico = c("Mínimo", "1er Cuartil (Q1)", "Mediana", "3er Cuartil (Q3)", "Máximo", "Media"),
+  Probabilidad = round(valores_objetivo, 2)
+  )
+
+# Mostrar la tabla con kableExtra
+tabla_resumen %>%
+  kable("html", caption = "Resultados distribución probabilidades", align = "lcc") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+
+```
